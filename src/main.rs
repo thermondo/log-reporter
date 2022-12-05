@@ -10,16 +10,18 @@ use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tracing::{info, instrument};
 
-use crate::server::get_app;
+use crate::server::build_app;
 
 mod config;
 mod extractors;
 mod log_parser;
+mod reporter;
 mod server;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    let config = config::Config::get();
+    let config = config::Config::init_from_env()?;
+    info!(?config, "config loaded");
 
     let tracing_registry = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
@@ -41,20 +43,22 @@ async fn main() -> Result<()> {
         None
     };
 
-    let app = get_app().layer(
+    let port = config.port;
+    let app = build_app(config).layer(
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
             .layer(sentry_tower::NewSentryLayer::new_from_top())
             .layer(sentry_tower::SentryHttpLayer::with_transaction()),
     );
 
-    axum::Server::bind(&SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-        config.port,
-    ))
-    .serve(app.into_make_service())
-    .with_graceful_shutdown(shutdown_signal())
-    .await?;
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
+
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    info!(?addr, "started server");
 
     Ok(())
 }

@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 
 use crate::{
+    config::Config,
     extractors::LogplexDrainToken,
     log_parser::{parse_key_value_pairs, parse_log_line, Kind},
+    reporter::report_to_sentry,
 };
+use anyhow::Context as _;
 use axum::{
-    extract::RawBody,
+    extract::{RawBody, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -13,24 +16,34 @@ use axum::{
 };
 use axum_extra::routing::RouterExt;
 use hyper::body;
-use tracing::{debug, info, instrument, warn};
+use sentry_anyhow::capture_anyhow;
+use std::sync::Arc;
+use tracing::{debug, error, info, instrument, warn};
 
-pub(crate) fn get_app() -> Router {
+pub(crate) fn build_app(config: Config) -> Router {
     Router::new()
         .route_with_tsr("/ht", get(health_check))
         .route("/", post(handle_logs))
+        .with_state(Arc::new(config))
 }
 
 pub(crate) async fn health_check() -> impl IntoResponse {
     StatusCode::OK
 }
 
-#[instrument(skip(body))]
+#[instrument(skip(body, config))]
 pub(crate) async fn handle_logs(
     TypedHeader(logplex_token): TypedHeader<LogplexDrainToken>,
+    State(config): State<Arc<Config>>,
     RawBody(body): RawBody,
 ) -> impl IntoResponse {
-    // FIXME: change to     extract::BodyStream,
+    let sentry_client = match config.sentry_clients.get(logplex_token.as_str()) {
+        Some(client) => client,
+        None => {
+            debug!(?logplex_token, "unknown logplex token");
+            return StatusCode::BAD_REQUEST;
+        }
+    };
 
     let body = match body::to_bytes(body).await {
         Ok(body) => body,
@@ -47,8 +60,6 @@ pub(crate) async fn handle_logs(
             return StatusCode::BAD_REQUEST;
         }
     };
-
-    // FIXME: validate logplex token
 
     for line in body_text.lines() {
         debug!("handling log line: {}", line);
@@ -72,6 +83,13 @@ pub(crate) async fn handle_logs(
                                 && map.get("code") == Some(&"H12".into())
                             {
                                 info!(path=?map.get("path"), "got timeout ");
+                                if let Err(err) =
+                                    report_to_sentry(sentry_client.clone(), &log, &map)
+                                        .context("error sending error to sentry")
+                                {
+                                    error!(?err, "error trying to report timeout to sentry");
+                                    capture_anyhow(&err);
+                                }
                             }
                         }
                         Err(err) => {
@@ -112,7 +130,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_check() {
-        let app = get_app();
+        let app = build_app(Config::default());
 
         let response = app
             .oneshot(Request::builder().uri("/ht").body(Body::empty()).unwrap())
@@ -124,7 +142,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_fails() {
-        let app = get_app();
+        let app = build_app(Config::default());
 
         let response = app
             .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
@@ -135,9 +153,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_post_parse_errors_lead_to_error() {
+    async fn test_post_parse_errors_dont_lead_to_error() {
         let _ = initialize_tracing();
-        let app = get_app();
+        let app = build_app(Config::default().with_fake_sentry_client("something"));
 
         let response = app
             .oneshot(
@@ -159,7 +177,7 @@ mod tests {
     #[tokio::test]
     async fn test_post_missing_drain_token() {
         let _ = initialize_tracing();
-        let app = get_app();
+        let app = build_app(Config::default());
 
         let response = app
             .oneshot(

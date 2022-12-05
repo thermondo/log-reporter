@@ -2,8 +2,14 @@ use axum::headers::{Error, Header, HeaderName, HeaderValue};
 
 pub static LOGPLEX_DRAIN_TOKEN: HeaderName = HeaderName::from_static("logplex-drain-token");
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct LogplexDrainToken(String);
+
+impl<'a> LogplexDrainToken {
+    pub(crate) fn as_str(&'a self) -> &'a str {
+        &self.0
+    }
+}
 
 impl Header for LogplexDrainToken {
     fn name() -> &'static HeaderName {
