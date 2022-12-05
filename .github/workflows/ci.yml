@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - id: install
+        run: |
+          rustup override set stable
+          rustup update stable
+
+      - name: restore build & cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: run tests
+        run: cargo test
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - id: install
+        run: |
+          rustup override set stable
+          rustup update stable
+          rustup component add rustfmt
+
+      - run: cargo fmt -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - id: install
+        run: |
+          rustup override set stable
+          rustup update stable
+          rustup component add clippy
+
+      - name: restore build & cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - run: cargo clippy --workspace --locked -- -D warnings
