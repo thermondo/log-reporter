@@ -8,7 +8,7 @@ use axum::{
     extract::RawBody, http::StatusCode, response::IntoResponse, routing::post, Router, TypedHeader,
 };
 use hyper::body;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 pub(crate) fn get_app() -> Router {
     Router::new().route("/", post(handle_logs))
@@ -24,8 +24,7 @@ pub(crate) async fn handle_logs(
     let body = match body::to_bytes(body).await {
         Ok(body) => body,
         Err(err) => {
-            // FIXME: report to sentry?
-            error!("could not fetch POST body: {:?}", err);
+            warn!("could not fetch POST body: {:?}", err);
             return StatusCode::BAD_REQUEST;
         }
     };
@@ -33,8 +32,7 @@ pub(crate) async fn handle_logs(
     let body_text = match std::str::from_utf8(&body) {
         Ok(body) => body,
         Err(err) => {
-            // FIXME: report to sentry?
-            error!("invalid UTF-8 in body: {:?}", err);
+            warn!("invalid UTF-8 in body: {:?}", err);
             return StatusCode::BAD_REQUEST;
         }
     };
