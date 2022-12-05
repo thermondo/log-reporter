@@ -15,6 +15,9 @@ RUN cargo build --release --bin log_reporter
 
 # We do not need the Rust toolchain to run the binary!
 FROM debian:buster-slim AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt update && apt install -y libssl-dev && rm -rf /var/lib/apt/lists/*
+
 WORKDIR app
 COPY --from=builder /app/target/release/log_reporter /usr/local/bin
-ENTRYPOINT ["/usr/local/bin/log_reporter"]
