@@ -8,7 +8,7 @@ use axum::{
     extract::RawBody, http::StatusCode, response::IntoResponse, routing::post, Router, TypedHeader,
 };
 use hyper::body;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 pub(crate) fn get_app() -> Router {
     Router::new().route("/", post(handle_logs))
@@ -57,7 +57,7 @@ pub(crate) async fn handle_logs(
                             if map.get("at") == Some(&"error".into())
                                 && map.get("code") == Some(&"H12".into())
                             {
-                                todo!();
+                                info!(path=?map.get("path"), "got timeout ");
                             }
                         }
                         Err(err) => {
