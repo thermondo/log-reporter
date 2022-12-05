@@ -1,6 +1,6 @@
 use axum::headers::{Error, Header, HeaderName, HeaderValue};
 
-static LOGPLEX_DRAIN_TOKEN: HeaderName = HeaderName::from_static("logplex-drain-token");
+pub static LOGPLEX_DRAIN_TOKEN: HeaderName = HeaderName::from_static("logplex-drain-token");
 
 #[derive(Debug)]
 pub(crate) struct LogplexDrainToken(String);
