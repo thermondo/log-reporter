@@ -3,6 +3,7 @@ use std::env;
 
 pub(crate) struct Config {
     pub port: u16,
+    pub sentry_dsn: Option<String>,
 }
 
 impl Config {
@@ -12,6 +13,7 @@ impl Config {
             port: env::var("PORT")
                 .map(|p| p.parse().expect("could not parse PORT"))
                 .unwrap_or(3000),
+            sentry_dsn: env::var("SENTRY_DSN").ok(),
         })
     }
 }

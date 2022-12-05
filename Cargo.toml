@@ -5,11 +5,26 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.66"
-axum = {version = "0.6.1", features = ["headers"]}
+axum = { version = "0.6.1", features = ["headers"] }
 chrono = "0.4.23"
 hyper = "0.14.23"
 nom = "7.1.1"
 once_cell = "1.16.0"
-tokio = { version = "1.22.0", features = ["rt-multi-thread", "macros", "signal"] }
+sentry = "0.29.1"
+sentry-anyhow = { version = "0.29.1", features = ["backtrace"] }
+sentry-panic = "0.29.1"
+sentry-tower = { version = "0.29.1", features = ["http"] }
+sentry-tracing = "0.29.1"
+tokio = { version = "1.22.0", features = [
+  "rt-multi-thread",
+  "macros",
+  "signal",
+] }
+tower = "0.4.13"
+tower-http = { version = "0.3.5", features = ["trace"] }
 tracing = "0.1.37"
-tracing-subscriber = { version = "0.3.16", default-features = false, features = ["ansi", "fmt", "env-filter"] }
+tracing-subscriber = { version = "0.3.16", default-features = false, features = [
+  "ansi",
+  "fmt",
+  "env-filter",
+] }
