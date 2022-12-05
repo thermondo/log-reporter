@@ -1,0 +1,10 @@
+[advisories]
+ignore = [
+    "RUSTSEC-2020-0071", # `time` localtime_r segfault
+]
+informational_warnings = ["unmaintained"] # warn for categories of informational advisories
+severity_threshold = "low" # CVSS severity ("none", "low", "medium", "high", "critical")
+
+[output]
+quiet = false
+deny = ["unmaintained"] # yanked is allowed for now
