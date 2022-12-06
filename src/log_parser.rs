@@ -45,7 +45,7 @@ pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {
                 )),
             ),
             preceded(space1, take_till1(|c: char| c.is_whitespace())),
-            preceded(tuple((space1, tag("-"), space1)), rest),
+            preceded(tuple((space1, tag("-"), space0)), rest),
         )),
         |(_, _, timestamp, _, kind, source, text)| LogLine {
             timestamp,
@@ -121,6 +121,23 @@ mod tests {
                 source: "web.15".into(), 
                 text: "[r9673 d8512f2b] INFO     [292844f1-49fe-445b-87b3-af87088b7df8] log_request_id.middleware: method=GET path=/api/disposition/foundation/ status=200 user=875".into(),
             });
+    }
+
+    #[test]
+    fn test_parse_empty_line() {
+        let input: &str = "69 <190>1 2022-12-05T20:26:20.860136+00:00 host app dramatiqworker.2 -";
+        let (remainder, result) = parse_log_line(input).expect("parse error");
+        assert!(remainder.is_empty());
+        assert_eq!(
+            result,
+            LogLine {
+                timestamp: DateTime::parse_from_rfc3339("2022-12-05T20:26:20.860136+00:00")
+                    .unwrap(),
+                kind: Kind::App,
+                source: "dramatiqworker.2".into(),
+                text: "".into(),
+            }
+        );
     }
 
     #[test]
