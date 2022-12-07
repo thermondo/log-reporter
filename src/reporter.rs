@@ -41,5 +41,6 @@ pub(crate) fn report_to_sentry(
 
     let hub = Hub::new(Some(client), Arc::new(scope));
     hub.capture_message(&format!("request timeout on {}", path), Level::Error);
+    hub.client().expect("no client").flush(None);
     Ok(())
 }
