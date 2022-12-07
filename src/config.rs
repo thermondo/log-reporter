@@ -8,6 +8,7 @@ use tracing::{debug, info, instrument};
 pub(crate) struct Config {
     pub port: u16,
     pub sentry_dsn: Option<String>,
+    pub sentry_debug: bool,
     pub sentry_clients: HashMap<String, Arc<sentry::Client>>,
 }
 
@@ -16,6 +17,7 @@ impl Default for Config {
         Self {
             port: 3000,
             sentry_dsn: None,
+            sentry_debug: false,
             sentry_clients: HashMap::new(),
         }
     }
@@ -31,6 +33,9 @@ impl Config {
                 .parse()
                 .context("could not parse PORT")?,
             sentry_dsn: env::var("SENTRY_DSN").ok(),
+            sentry_debug: !(env::var("SENTRY_DEBUG")
+                .unwrap_or_else(|_| "".into())
+                .is_empty()),
             ..Default::default()
         };
 
@@ -46,6 +51,7 @@ impl Config {
                     sentry::ClientOptions {
                         environment: Some(Cow::Owned(sentry_environment.to_owned())),
                         transport: Some(Arc::new(DefaultTransportFactory)),
+                        debug: config.sentry_debug,
                         ..Default::default()
                     },
                 ));

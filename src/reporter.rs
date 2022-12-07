@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use axum::http::uri::Uri;
 use sentry::{Client, Hub, Level, Scope};
 use std::sync::Arc;
-use tracing::{debug, instrument};
+use tracing::{info, instrument};
 
 use crate::log_parser::LogLine;
 
-#[instrument]
+#[instrument(skip(client))]
 pub(crate) fn report_to_sentry(
     client: Arc<Client>,
     _logline: &LogLine,
@@ -37,10 +37,10 @@ pub(crate) fn report_to_sentry(
     scope.set_tag("transaction", full_url.path());
     scope.set_tag("url", &full_url);
 
-    debug!(?path, ?full_url, "reporting timeout to sentry");
+    info!(?path, ?full_url, "reporting timeout to sentry");
 
     let hub = Hub::new(Some(client), Arc::new(scope));
-    hub.capture_message(&format!("request timeout on {}", path), Level::Error);
-    hub.client().expect("no client").flush(None);
+    let uuid = hub.capture_message(&format!("request timeout on {}", path), Level::Error);
+    info!(?uuid, last_event_id = ?hub.last_event_id(), "captured message");
     Ok(())
 }

@@ -34,6 +34,7 @@ async fn main() -> Result<()> {
             sentry::ClientOptions {
                 release: std::env::var("HEROKU_RELEASE_VERSION").map(Cow::Owned).ok(),
                 attach_stacktrace: true,
+                debug: config.sentry_debug,
                 ..Default::default()
             }
             .add_integration(sentry_panic::PanicIntegration::default()),
@@ -52,13 +53,13 @@ async fn main() -> Result<()> {
     );
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
-
+    info!(?addr, "starting server");
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
-    info!(?addr, "started server");
+    // FIXME: explicitly close the sentry clients
 
     Ok(())
 }

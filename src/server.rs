@@ -82,7 +82,11 @@ pub(crate) async fn handle_logs(
                             if map.get("at") == Some(&"error".into())
                                 && map.get("code") == Some(&"H12".into())
                             {
-                                info!(path=?map.get("path"), "got timeout ");
+                                info!(
+                                    logplex_token=logplex_token.as_str(),
+                                    path=?map.get("path"),
+                                    "got timeout"
+                                );
                                 if let Err(err) =
                                     report_to_sentry(sentry_client.clone(), &log, &map)
                                         .context("error sending error to sentry")
