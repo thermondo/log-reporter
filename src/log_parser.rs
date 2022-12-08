@@ -174,4 +174,41 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn test_parse_router_timeout_log() {
+        let input: &str = "\
+            at=error code=H12 desc=\"Request timeout\" method=GET \
+            path=/ host=myapp.herokuapp.com \
+            request_id=8601b555-6a83-4c12-8269-97c8e32cdb22 \
+            fwd=\"204.204.204.204\" dyno=web.1 connect=0ms service=30000ms \
+            status=503 bytes=0 protocol=https\
+            ";
+
+        let (remainder, result) = parse_key_value_pairs(input).expect("parse error");
+        assert!(remainder.is_empty(), "rest: {}", remainder);
+
+        assert_eq!(
+            result,
+            vec![
+                ("at".into(), "error".into()),
+                ("code".into(), "H12".into()),
+                ("desc".into(), "Request timeout".into()),
+                ("method".into(), "GET".into(),),
+                ("path".into(), "/".into(),),
+                ("host".into(), "myapp.herokuapp.com".into(),),
+                (
+                    "request_id".into(),
+                    "8601b555-6a83-4c12-8269-97c8e32cdb22".into(),
+                ),
+                ("fwd".into(), "204.204.204.204".into()),
+                ("dyno".into(), "web.1".into(),),
+                ("connect".into(), "0ms".into(),),
+                ("service".into(), "30000ms".into(),),
+                ("status".into(), "503".into(),),
+                ("bytes".into(), "0".into(),),
+                ("protocol".into(), "https".into(),),
+            ]
+        );
+    }
 }

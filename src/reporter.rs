@@ -11,7 +11,7 @@ use crate::log_parser::LogLine;
 #[instrument(skip(client))]
 pub(crate) fn report_to_sentry(
     client: Arc<Client>,
-    _logline: &LogLine,
+    logline: &LogLine,
     items: &HashMap<String, String>,
 ) -> Result<()> {
     let mut scope = Scope::default();
@@ -35,12 +35,25 @@ pub(crate) fn report_to_sentry(
         .context("failed building full URL")?;
 
     scope.set_tag("transaction", full_url.path());
-    scope.set_tag("url", &full_url);
+    scope.set_tag("url", &full_url.to_string()[..200]);
 
-    info!(?path, ?full_url, "reporting timeout to sentry");
+    if let Some(request_id) = items.get("request_id") {
+        scope.set_tag("request_id", request_id);
+    }
+
+    if let Some(dyno) = items.get("dyno") {
+        scope.set_tag("server_name", dyno);
+    }
+
+    scope.set_fingerprint(Some(&["heroku-router-request-timeout", full_url.path()]));
+
+    info!(?scope, "reporting timeout to sentry");
 
     let hub = Hub::new(Some(client), Arc::new(scope));
-    let uuid = hub.capture_message(&format!("request timeout on {}", path), Level::Error);
+    let uuid = hub.capture_message(
+        &format!("request timeout on {}\n{}", full_url.path(), logline.text),
+        Level::Error,
+    );
     info!(?uuid, last_event_id = ?hub.last_event_id(), "captured message");
     Ok(())
 }
