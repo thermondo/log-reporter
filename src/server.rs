@@ -54,6 +54,14 @@ pub(crate) async fn handle_logs(
         }
     };
 
+    // using `spawn_blocking` here decreases the performance a little because of
+    // the synchronization overhead,
+    // but it _increases_ the possible concurrency on a single process / dyno.
+    //
+    // Without `spawn_blocking` some requests have to wait when we have high load.
+    //
+    // We might be able to optimize this further by using a separate threadpool &
+    // channel for the log-parsing and not using tokio's blocking-IO pool for this.
     match spawn_blocking({
         let sentry_client = sentry_client.clone();
         move || {
