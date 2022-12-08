@@ -18,6 +18,7 @@ use axum_extra::routing::RouterExt;
 use hyper::body;
 use sentry_anyhow::capture_anyhow;
 use std::sync::Arc;
+use tokio::task::spawn_blocking;
 use tracing::{debug, error, info, instrument, warn};
 
 pub(crate) fn build_app(config: Config) -> Router {
@@ -53,62 +54,81 @@ pub(crate) async fn handle_logs(
         }
     };
 
-    let body_text = match std::str::from_utf8(&body) {
-        Ok(body) => body,
-        Err(err) => {
-            warn!("invalid UTF-8 in body: {:?}", err);
-            return StatusCode::BAD_REQUEST;
-        }
-    };
+    match spawn_blocking({
+        let sentry_client = sentry_client.clone();
+        move || {
+            let body_text = match std::str::from_utf8(&body) {
+                Ok(body) => body,
+                Err(err) => {
+                    warn!("invalid UTF-8 in body: {:?}", err);
+                    return StatusCode::BAD_REQUEST;
+                }
+            };
 
-    for line in body_text.lines() {
-        debug!("handling log line: {}", line);
+            for line in body_text.lines() {
+                debug!("handling log line: {}", line);
 
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
 
-        match parse_log_line(line) {
-            Ok((_, log)) => {
-                if log.kind == Kind::Heroku && log.source == "router" {
-                    match parse_key_value_pairs(&log.text) {
-                        Ok((_, pairs)) => {
-                            let map: HashMap<String, String> =
-                                HashMap::from_iter(pairs.into_iter());
+                match parse_log_line(line) {
+                    Ok((_, log)) => {
+                        if log.kind == Kind::Heroku && log.source == "router" {
+                            match parse_key_value_pairs(&log.text) {
+                                Ok((_, pairs)) => {
+                                    let map: HashMap<String, String> =
+                                        HashMap::from_iter(pairs.into_iter());
 
-                            debug!(?map, "got router log");
+                                    debug!(?map, "got router log");
 
-                            if map.get("at") == Some(&"error".into())
-                                && map.get("code") == Some(&"H12".into())
-                            {
-                                info!(
-                                    logplex_token=logplex_token.as_str(),
-                                    path=?map.get("path"),
-                                    "got timeout"
-                                );
-                                if let Err(err) =
-                                    report_to_sentry(sentry_client.clone(), &log, &map)
-                                        .context("error sending error to sentry")
-                                {
-                                    error!(?err, "error trying to report timeout to sentry");
-                                    capture_anyhow(&err);
+                                    if map.get("at") == Some(&"error".into())
+                                        && map.get("code") == Some(&"H12".into())
+                                    {
+                                        info!(
+                                            logplex_token=logplex_token.as_str(),
+                                            path=?map.get("path"),
+                                            "got timeout"
+                                        );
+                                        if let Err(err) =
+                                            report_to_sentry(sentry_client.clone(), &log, &map)
+                                                .context("error sending error to sentry")
+                                        {
+                                            error!(
+                                                ?err,
+                                                "error trying to report timeout to sentry"
+                                            );
+                                            capture_anyhow(&err);
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        "could not parse key value pairs: {:?}\n{}",
+                                        err, log.text
+                                    );
                                 }
                             }
                         }
-                        Err(err) => {
-                            warn!("could not parse key value pairs: {:?}\n{}", err, log.text);
-                        }
+                    }
+                    Err(err) => {
+                        warn!("could not parse log line: {:?}\n{}", err, line);
                     }
                 }
             }
-            Err(err) => {
-                warn!("could not parse log line: {:?}\n{}", err, line);
-            }
+            StatusCode::OK
+        }
+    })
+    .await
+    .context("error joining tokio task")
+    {
+        Ok(response) => response,
+        Err(err) => {
+            capture_anyhow(&err);
+            StatusCode::INTERNAL_SERVER_ERROR
         }
     }
-
-    StatusCode::OK
 }
 
 //
