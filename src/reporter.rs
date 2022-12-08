@@ -35,7 +35,7 @@ pub(crate) fn report_to_sentry(
         .context("failed building full URL")?;
 
     scope.set_tag("transaction", full_url.path());
-    scope.set_tag("url", &full_url.to_string()[..200]);
+    scope.set_tag("url", &full_url.to_string());
 
     if let Some(request_id) = items.get("request_id") {
         scope.set_tag("request_id", request_id);
