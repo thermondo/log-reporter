@@ -1,12 +1,4 @@
-use std::collections::HashMap;
-
-use crate::{
-    config::Config,
-    extractors::LogplexDrainToken,
-    log_parser::{parse_key_value_pairs, parse_log_line, Kind},
-    reporter::report_to_sentry,
-};
-use anyhow::Context as _;
+use crate::{config::Config, extractors::LogplexDrainToken, reporter::process_logs};
 use axum::{
     extract::{RawBody, State},
     http::StatusCode,
@@ -16,16 +8,14 @@ use axum::{
 };
 use axum_extra::routing::RouterExt;
 use hyper::body;
-use sentry_anyhow::capture_anyhow;
 use std::sync::Arc;
-use tokio::task::spawn_blocking;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, instrument, warn};
 
-pub(crate) fn build_app(config: Config) -> Router {
+pub(crate) fn build_app(config: Arc<Config>) -> Router {
     Router::new()
         .route_with_tsr("/ht", get(health_check))
         .route("/", post(handle_logs))
-        .with_state(Arc::new(config))
+        .with_state(config)
 }
 
 pub(crate) async fn health_check() -> impl IntoResponse {
@@ -54,109 +44,34 @@ pub(crate) async fn handle_logs(
         }
     };
 
-    // using `spawn_blocking` here decreases the performance a little because of
-    // the synchronization overhead,
-    // but it _increases_ the possible concurrency on a single process / dyno.
-    //
-    // Without `spawn_blocking` some requests have to wait when we have high load.
-    //
-    // We might be able to optimize this further by using a separate threadpool &
-    // channel for the log-parsing and not using tokio's blocking-IO pool for this.
-    match spawn_blocking({
-        let sentry_client = sentry_client.clone();
-        move || {
-            let body_text = match std::str::from_utf8(&body) {
-                Ok(body) => body,
-                Err(err) => {
-                    warn!("invalid UTF-8 in body: {:?}", err);
-                    return StatusCode::BAD_REQUEST;
-                }
-            };
-
-            for line in body_text.lines() {
-                debug!("handling log line: {}", line);
-
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-
-                match parse_log_line(line) {
-                    Ok((_, log)) => {
-                        if log.kind == Kind::Heroku && log.source == "router" {
-                            match parse_key_value_pairs(&log.text) {
-                                Ok((_, pairs)) => {
-                                    let map: HashMap<String, String> =
-                                        HashMap::from_iter(pairs.into_iter());
-
-                                    debug!(?map, "got router log");
-
-                                    if map.get("at") == Some(&"error".into())
-                                        && map.get("code") == Some(&"H12".into())
-                                    {
-                                        info!(
-                                            logplex_token=logplex_token.as_str(),
-                                            path=?map.get("path"),
-                                            "got timeout"
-                                        );
-                                        if let Err(err) =
-                                            report_to_sentry(sentry_client.clone(), &log, &map)
-                                                .context("error sending error to sentry")
-                                        {
-                                            error!(
-                                                ?err,
-                                                "error trying to report timeout to sentry"
-                                            );
-                                            capture_anyhow(&err);
-                                        }
-                                    }
-                                }
-                                Err(err) => {
-                                    warn!(
-                                        "could not parse key value pairs: {:?}\n{}",
-                                        err, log.text
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        warn!("could not parse log line: {:?}\n{}", err, line);
-                    }
-                }
-            }
-            StatusCode::OK
-        }
-    })
-    .await
-    .context("error joining tokio task")
-    {
-        Ok(response) => response,
+    let body_text = match std::str::from_utf8(&body) {
+        Ok(body) => body,
         Err(err) => {
-            capture_anyhow(&err);
-            StatusCode::INTERNAL_SERVER_ERROR
+            warn!("invalid UTF-8 in body: {:?}", err);
+            return StatusCode::BAD_REQUEST;
         }
+    };
+
+    if let Err(err) = process_logs(sentry_client.clone(), body_text) {
+        warn!("error processing logs: {:?}", err);
     }
+
+    StatusCode::OK
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extractors::LOGPLEX_DRAIN_TOKEN;
+    use crate::{extractors::LOGPLEX_DRAIN_TOKEN, test_utils::initialize_tracing};
     use axum::{
         body::Body,
         http::{self, Request, StatusCode},
     };
     use tower::ServiceExt;
 
-    #[must_use]
-    fn initialize_tracing() -> tracing::subscriber::DefaultGuard {
-        tracing::subscriber::set_default(tracing_subscriber::fmt().with_test_writer().finish())
-    }
-
     #[tokio::test]
     async fn test_health_check() {
-        let app = build_app(Config::default());
+        let app = build_app(Arc::new(Config::default()));
 
         let response = app
             .oneshot(Request::builder().uri("/ht").body(Body::empty()).unwrap())
@@ -168,7 +83,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_fails() {
-        let app = build_app(Config::default());
+        let app = build_app(Arc::new(Config::default()));
 
         let response = app
             .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
@@ -179,31 +94,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_post_parse_errors_dont_lead_to_error() {
+    async fn test_post_parse_errors_dont_lead_to_server_error() {
         let _ = initialize_tracing();
-        let app = build_app(Config::default().with_fake_sentry_client("something"));
+        let config = Config::default();
 
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(http::Method::POST)
-                    .uri("/")
-                    .header(&LOGPLEX_DRAIN_TOKEN, "something")
-                    .body(Body::from("some text"))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        config
+            .with_captured_sentry_events_async("something", |_, config| async move {
+                let app = build_app(config.clone());
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .method(http::Method::POST)
+                            .uri("/")
+                            .header(&LOGPLEX_DRAIN_TOKEN, "something")
+                            .body(Body::from("some text"))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK);
-        let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
-        assert!(bytes.is_empty());
+                assert_eq!(response.status(), StatusCode::OK);
+                let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+                assert!(bytes.is_empty());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_post_wrong_drain_token() {
+        let _ = initialize_tracing();
+        let config = Config::default();
+
+        config
+            .with_captured_sentry_events_async("real_token", |_, config| async move {
+                let app = build_app(config.clone());
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .method(http::Method::POST)
+                            .uri("/")
+                            .header(&LOGPLEX_DRAIN_TOKEN, "other_token")
+                            .body(Body::from("some text"))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+                let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+                assert!(bytes.is_empty());
+            })
+            .await;
     }
 
     #[tokio::test]
     async fn test_post_missing_drain_token() {
         let _ = initialize_tracing();
-        let app = build_app(Config::default());
+        let config = Arc::new(Config::default());
+        let app = build_app(config.clone());
 
         let response = app
             .oneshot(

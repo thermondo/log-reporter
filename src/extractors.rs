@@ -36,3 +36,28 @@ impl Header for LogplexDrainToken {
         values.extend(std::iter::once(value));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use axum::headers::HeaderMapExt;
+    use axum::http::HeaderMap;
+
+    #[test]
+    fn test_encode_logplex_drain_token() {
+        let mut map = HeaderMap::new();
+        map.typed_insert(LogplexDrainToken("token".into()));
+        assert_eq!(map["logplex-drain-token"], "token");
+    }
+
+    #[test]
+    fn test_decode_logplex_drain_token() {
+        let mut map = HeaderMap::new();
+        map.append(LogplexDrainToken::name(), "token".parse().unwrap());
+        assert_eq!(
+            map.typed_get::<LogplexDrainToken>().unwrap(),
+            LogplexDrainToken("token".into())
+        );
+    }
+}

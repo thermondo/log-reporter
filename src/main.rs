@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
 };
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -17,10 +18,12 @@ mod extractors;
 mod log_parser;
 mod reporter;
 mod server;
+#[cfg(test)]
+mod test_utils;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    let config = config::Config::init_from_env()?;
+    let config = Arc::new(config::Config::init_from_env()?);
     info!(?config, "config loaded");
 
     let tracing_registry = tracing_subscriber::registry()
@@ -58,8 +61,6 @@ async fn main() -> Result<()> {
         .serve(app.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
-
-    // FIXME: explicitly close the sentry clients
 
     Ok(())
 }
