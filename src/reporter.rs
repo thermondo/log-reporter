@@ -112,14 +112,25 @@ pub(crate) fn process_logs(sentry_client: Arc<Client>, input: &str) -> Result<()
 
             debug!(?map, "got router log");
 
-            let (at, code) = if let (Some(at), Some(code)) = (map.get("at"), map.get("code")) {
-                (at, code)
+            let at = if let Some(at) = map.get("at") {
+                at
             } else {
-                warn!(?line, "missing `at` and `code` in router log line");
+                warn!(?line, "missing `at` in router log line");
                 continue;
             };
 
-            if at == "error" && code == "H12" {
+            if at != "error" {
+                continue;
+            }
+
+            let code = if let Some(code) = map.get("code") {
+                code
+            } else {
+                warn!(?line, "missing `code` in router `error` log line");
+                continue;
+            };
+
+            if code == "H12" {
                 if let Some(msg) = generate_timeout_message(&log, &map) {
                     send_to_sentry(sentry_client.clone(), msg);
                 }
