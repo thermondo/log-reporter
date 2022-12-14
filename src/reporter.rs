@@ -71,7 +71,7 @@ fn generate_timeout_message(
     })
 }
 
-#[instrument]
+#[instrument(fields(dsn=?sentry_client.dsn()), skip(sentry_client))]
 fn send_to_sentry(sentry_client: Arc<Client>, message: SentryMessage) {
     info!(?message, "reporting timeout to sentry");
 
@@ -90,7 +90,7 @@ fn send_to_sentry(sentry_client: Arc<Client>, message: SentryMessage) {
     info!(?uuid, last_event_id = ?hub.last_event_id(), "captured message");
 }
 
-#[instrument]
+#[instrument(fields(dsn=?sentry_client.dsn()), skip(sentry_client))]
 pub(crate) fn process_logs(sentry_client: Arc<Client>, input: &str) -> Result<()> {
     for line in input.lines() {
         debug!("handling log line: {}", line);
