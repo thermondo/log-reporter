@@ -26,8 +26,17 @@ async fn main() -> Result<()> {
     let config = Arc::new(config::Config::init_from_env()?);
     info!(?config, "config loaded");
 
+    let heroku_release = std::env::var("HEROKU_RELEASE_VERSION").ok();
+
+    let mut tracing_subscriber_layer = tracing_subscriber::fmt::layer();
+
+    if heroku_release.is_some() {
+        // we don't want ansi colors on heroku since logentries doesnt understand them.
+        tracing_subscriber_layer = tracing_subscriber_layer.with_ansi(false);
+    }
+
     let tracing_registry = tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber_layer)
         .with(EnvFilter::from_default_env());
 
     let _sentry_guard = if let Some(sentry_dsn) = &config.sentry_dsn {
@@ -35,7 +44,7 @@ async fn main() -> Result<()> {
         Some(sentry::init((
             sentry_dsn.clone(),
             sentry::ClientOptions {
-                release: std::env::var("HEROKU_RELEASE_VERSION").map(Cow::Owned).ok(),
+                release: heroku_release.map(Cow::Owned),
                 attach_stacktrace: true,
                 debug: config.sentry_debug,
                 ..Default::default()
