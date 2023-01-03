@@ -1,9 +1,9 @@
 use chrono::{DateTime, FixedOffset};
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till1, take_while1},
+    bytes::complete::{tag, take_till1, take_while1, take_while_m_n},
     character::complete::{digit1, multispace0, space0, space1},
-    combinator::{map, map_res, rest, value},
+    combinator::{all_consuming, map, map_res, rest, value},
     multi::many1,
     sequence::{delimited, preceded, tuple},
     IResult,
@@ -74,9 +74,38 @@ pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, Vec<(String, S
     ))(input)
 }
 
+pub(crate) fn parse_sfid(input: &str) -> IResult<&str, &str> {
+    alt((
+        all_consuming(take_while_m_n(18, 18, |ch: char| {
+            ch.is_ascii_alphanumeric()
+        })),
+        all_consuming(take_while_m_n(15, 15, |ch: char| {
+            ch.is_ascii_alphanumeric()
+        })),
+    ))(input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_case::test_case;
+
+    #[test_case("0WO1i000003COEnGAO"; "18 digit id")]
+    #[test_case("0WO1i000003COEn"; "15 digit id")]
+    fn test_parse_sfid(input: &str) {
+        let (remainder, result) = parse_sfid(input).expect("parse error");
+        assert!(remainder.is_empty(), "{}", remainder);
+        assert_eq!(result, input);
+    }
+
+    #[test_case("0WO1i000003COEnGA"; "length 17")]
+    #[test_case("0WO1i000003COEnGABA"; "length 19")]
+    #[test_case("0WO1i000003COE"; "length 14")]
+    #[test_case("0WO1i000;03COEn"; "non alphanum char")]
+    fn test_parse_sfid_invalid(input: &str) {
+        let result = parse_sfid(input);
+        assert!(result.is_err(), "{:?}", result);
+    }
 
     #[test]
     fn test_full_router_line_info() {

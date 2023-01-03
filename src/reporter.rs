@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
-use crate::log_parser::LogLine;
+use crate::log_parser::{parse_sfid, LogLine};
 
 #[derive(Debug)]
 struct SentryMessage {
@@ -28,6 +28,8 @@ fn route_from_path(path: &str) -> String {
                 "{number}"
             } else if Uuid::try_parse(el).is_ok() {
                 "{uuid}"
+            } else if parse_sfid(el).is_ok() {
+                "{sfid}"
             } else {
                 el
             }
