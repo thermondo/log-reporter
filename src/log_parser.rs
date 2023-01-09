@@ -3,7 +3,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till1, take_while1, take_while_m_n},
     character::complete::{digit1, multispace0, space0, space1},
-    combinator::{all_consuming, map, map_res, rest, value},
+    combinator::{all_consuming, map, map_res, recognize, rest, value},
     multi::many1,
     sequence::{delimited, preceded, tuple},
     IResult,
@@ -85,6 +85,20 @@ pub(crate) fn parse_sfid(input: &str) -> IResult<&str, &str> {
     ))(input)
 }
 
+/// parse a thermondo project reference
+pub(crate) fn parse_project_reference(input: &str) -> IResult<&str, &str> {
+    recognize(all_consuming(tuple((
+        // the prefix.
+        take_while_m_n(2, 2, |ch: char| ch.is_ascii_uppercase()),
+        // the year
+        take_while_m_n(2, 2, |ch: char| ch.is_ascii_digit()),
+        // the counter, base32
+        take_while_m_n(4, 4, |ch: char| {
+            ch.is_ascii_uppercase() || ch.is_ascii_digit()
+        }),
+    ))))(input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +127,24 @@ mod tests {
     #[test_case("0WO1i000;03COEn"; "non alphanum char")]
     #[test_case(""; "empty string")]
     fn test_parse_sfid_invalid(input: &str) {
+        let result = parse_sfid(input);
+        assert!(result.is_err(), "{:?}", result);
+    }
+
+    #[test_case("WO220VLD")]
+    #[test_case("BV221C02")]
+    fn test_project_reference(input: &str) {
+        let (remainder, result) = parse_project_reference(input).expect("parse error");
+        assert!(remainder.is_empty(), "{}", remainder);
+        assert_eq!(result, input);
+    }
+
+    #[test_case(""; "empty string")]
+    #[test_case("BV221C0"; "too short")]
+    #[test_case("BV2X1C00"; "letter in year")]
+    #[test_case("1V221C00"; "number in prefix")]
+    #[test_case("BV221c02"; "lower case letter in counter")]
+    fn test_parse_project_reference_invalid(input: &str) {
         let result = parse_sfid(input);
         assert!(result.is_err(), "{:?}", result);
     }
