@@ -92,6 +92,15 @@ mod tests {
 
     #[test_case("0WO1i000003COEnGAO"; "18 digit id")]
     #[test_case("0WO1i000003COEn"; "15 digit id")]
+    // the following are some more real-world examples from the timeout logs
+    #[test_case("0WO1i0000029e8EGAQ")]
+    #[test_case("0WO1i000003CROHGA4")]
+    #[test_case("0WO1i000003CPOKGA4")]
+    #[test_case("0WO1i000003CP8qGAG")]
+    #[test_case("0WO1i000003COEnGAO")]
+    #[test_case("0WO1i000003CNKuGAO")]
+    #[test_case("0WO1i000003CNxhGAG")]
+    #[test_case("0WO1i000003BtjeGAC")]
     fn test_parse_sfid(input: &str) {
         let (remainder, result) = parse_sfid(input).expect("parse error");
         assert!(remainder.is_empty(), "{}", remainder);
