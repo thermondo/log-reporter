@@ -99,10 +99,67 @@ pub(crate) fn parse_project_reference(input: &str) -> IResult<&str, &str> {
     ))))(input)
 }
 
+pub(crate) fn parse_partial_offer_number(input: &str) -> IResult<&str, &str> {
+    recognize(tuple((
+        take_while1(|ch: char| ch.is_ascii_digit()),
+        tag("-"),
+        take_while1(|ch: char| ch.is_ascii_digit()),
+    )))(input)
+}
+
+pub(crate) fn parse_offer_number(input: &str) -> IResult<&str, &str> {
+    recognize(all_consuming(parse_partial_offer_number))(input)
+}
+
+pub(crate) fn parse_offer_extension_number(input: &str) -> IResult<&str, &str> {
+    recognize(all_consuming(tuple((
+        parse_partial_offer_number,
+        tag("-"),
+        take_while1(|ch: char| ch.is_ascii_uppercase()),
+    ))))(input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use test_case::test_case;
+
+    #[test_case("0608656-04")]
+    fn test_parse_offer_id(input: &str) {
+        let (remainder, result) = parse_offer_number(input).expect("parse error");
+        assert!(remainder.is_empty(), "{}", remainder);
+        assert_eq!(result, input);
+    }
+
+    #[test_case(""; "empty string")]
+    #[test_case("0608656-04A"; "letter in offer number")]
+    #[test_case("0608656-04-A"; "extension id")]
+    #[test_case("060A656-04"; "letter in customer number")]
+    #[test_case("-04"; "missing customer number")]
+    #[test_case("123456-"; "missing offer number")]
+    fn test_parse_offer_id_invalid(input: &str) {
+        let result = parse_offer_number(input);
+        assert!(result.is_err(), "{:?}", result);
+    }
+
+    #[test_case("0608656-04-A")]
+    #[test_case("0608656-04-AB")]
+    #[test_case("0608656123123123123-04123123123123-ABASLFKAJSLKJDAS")]
+    fn test_parse_offer_extension_id(input: &str) {
+        let result = parse_offer_extension_number(input);
+        assert!(result.is_ok(), "{:?}", result);
+        let (remainder, result) = result.expect("parse error");
+        assert!(remainder.is_empty(), "{}", remainder);
+        assert_eq!(result, input);
+    }
+
+    #[test_case(""; "empty string")]
+    #[test_case("0608656-04"; "offer id")]
+    #[test_case("0608656-04-1"; "number in extension counter")]
+    fn test_parse_offer_extension_id_invalid(input: &str) {
+        let result = parse_offer_extension_number(input);
+        assert!(result.is_err(), "{:?}", result);
+    }
 
     #[test_case("0WO1i000003COEnGAO"; "18 digit id")]
     #[test_case("0WO1i000003COEn"; "15 digit id")]
