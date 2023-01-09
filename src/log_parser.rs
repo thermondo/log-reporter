@@ -102,6 +102,7 @@ mod tests {
     #[test_case("0WO1i000003COEnGABA"; "length 19")]
     #[test_case("0WO1i000003COE"; "length 14")]
     #[test_case("0WO1i000;03COEn"; "non alphanum char")]
+    #[test_case(""; "empty string")]
     fn test_parse_sfid_invalid(input: &str) {
         let result = parse_sfid(input);
         assert!(result.is_err(), "{:?}", result);
