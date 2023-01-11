@@ -22,6 +22,9 @@ struct SentryMessage {
 /// Replaces elements in the URL that are
 /// - positive integers
 /// - UUIDs
+/// - Salesforce IDs
+/// - thermondo project references
+/// - thermondo offer & offer-extension numbers
 fn route_from_path(path: &str) -> String {
     let elements: Vec<_> = path
         .split('/')
