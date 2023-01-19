@@ -3,7 +3,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till1, take_while1, take_while_m_n},
     character::complete::{digit1, multispace0, space0, space1},
-    combinator::{all_consuming, map, map_res, recognize, rest, value},
+    combinator::{all_consuming, map, map_res, recognize, rest, value, verify},
     multi::many1,
     sequence::{delimited, preceded, tuple},
     IResult,
@@ -75,14 +75,23 @@ pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, Vec<(String, S
 }
 
 pub(crate) fn parse_sfid(input: &str) -> IResult<&str, &str> {
-    alt((
-        all_consuming(take_while_m_n(18, 18, |ch: char| {
-            ch.is_ascii_alphanumeric()
-        })),
-        all_consuming(take_while_m_n(15, 15, |ch: char| {
-            ch.is_ascii_alphanumeric()
-        })),
-    ))(input)
+    verify(
+        alt((
+            all_consuming(take_while_m_n(18, 18, |ch: char| {
+                ch.is_ascii_alphanumeric()
+            })),
+            all_consuming(take_while_m_n(15, 15, |ch: char| {
+                ch.is_ascii_alphanumeric()
+            })),
+        )),
+        |sfid: &str| {
+            // when the is is all lowercase or all uppercase, it's not an SFID
+            // FIXME: the better solution is to _really_ parse the SFID following
+            // the salesforce definition.
+            !(sfid.chars().all(|ch| ch.is_ascii_lowercase())
+                || sfid.chars().all(|ch| ch.is_ascii_uppercase()))
+        },
+    )(input)
 }
 
 /// parse a thermondo project reference
@@ -182,6 +191,10 @@ mod tests {
     #[test_case("0WO1i000003COEnGABA"; "length 19")]
     #[test_case("0WO1i000003COE"; "length 14")]
     #[test_case("0WO1i000;03COEn"; "non alphanum char")]
+    #[test_case("acceptanceprotocol"; "18 digit normal lower case word")]
+    #[test_case("predefinedoffer"; "15 digit normal lower case word")]
+    #[test_case("ACCEPTANCEPROTOCOL"; "18 digit normal upper case word")]
+    #[test_case("PREDEFINEDOFFER"; "15 digit normal upper case word")]
     #[test_case(""; "empty string")]
     fn test_parse_sfid_invalid(input: &str) {
         let result = parse_sfid(input);
