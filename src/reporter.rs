@@ -1,5 +1,5 @@
 use crate::log_parser::{parse_key_value_pairs, parse_log_line, Kind};
-use anyhow::{anyhow, Result};
+use anyhow::{Context as _, Result};
 use axum::http::uri::Uri;
 use sentry::{Client, Hub, Level, Scope};
 use std::collections::HashMap;
@@ -113,13 +113,14 @@ pub(crate) fn process_logs(sentry_client: Arc<Client>, input: &str) -> Result<()
             continue;
         }
 
-        let (_, log) =
-            parse_log_line(line).map_err(|err| anyhow!("could not parse log line: {:?}", err))?;
+        let (_, log) = parse_log_line(line)
+            .map_err(|err| err.to_owned())
+            .context("could not parse log line")?;
 
         if log.kind == Kind::Heroku && log.source == "router" {
-            let (_, pairs) = parse_key_value_pairs(&log.text).map_err(|err| {
-                anyhow!("could not parse key value pairs: {:?}\n{}", err, log.text)
-            })?;
+            let (_, pairs) = parse_key_value_pairs(&log.text)
+                .map_err(|err| err.to_owned())
+                .with_context(|| format!("could not parse key value pairs from {}", log.text))?;
 
             let map: HashMap<String, String> = HashMap::from_iter(pairs.into_iter());
 
