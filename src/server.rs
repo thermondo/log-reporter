@@ -65,7 +65,7 @@ mod tests {
     use crate::{extractors::LOGPLEX_DRAIN_TOKEN, test_utils::initialize_tracing};
     use axum::{
         body::Body,
-        http::{self, Request, StatusCode},
+        http::{Request, StatusCode},
     };
     use tower::ServiceExt;
 
@@ -74,7 +74,7 @@ mod tests {
         let app = build_app(Arc::new(Config::default()));
 
         let response = app
-            .oneshot(Request::builder().uri("/ht").body(Body::empty()).unwrap())
+            .oneshot(Request::get("/ht").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
@@ -86,7 +86,7 @@ mod tests {
         let app = build_app(Arc::new(Config::default()));
 
         let response = app
-            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
@@ -103,9 +103,7 @@ mod tests {
                 let app = build_app(config.clone());
                 let response = app
                     .oneshot(
-                        Request::builder()
-                            .method(http::Method::POST)
-                            .uri("/")
+                        Request::post("/")
                             .header(&LOGPLEX_DRAIN_TOKEN, "something")
                             .body(Body::from("some text"))
                             .unwrap(),
@@ -130,9 +128,7 @@ mod tests {
                 let app = build_app(config.clone());
                 let response = app
                     .oneshot(
-                        Request::builder()
-                            .method(http::Method::POST)
-                            .uri("/")
+                        Request::post("/")
                             .header(&LOGPLEX_DRAIN_TOKEN, "other_token")
                             .body(Body::from("some text"))
                             .unwrap(),
@@ -154,13 +150,7 @@ mod tests {
         let app = build_app(config.clone());
 
         let response = app
-            .oneshot(
-                Request::builder()
-                    .method(http::Method::POST)
-                    .uri("/")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::post("/").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
