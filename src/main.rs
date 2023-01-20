@@ -1,17 +1,15 @@
+use crate::server::build_app;
+use anyhow::Result;
 use std::{
     borrow::Cow,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
-use tracing_subscriber::{prelude::*, EnvFilter};
-
-use anyhow::Result;
 use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tracing::{info, instrument};
-
-use crate::server::build_app;
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 mod config;
 mod extractors;

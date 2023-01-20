@@ -1,4 +1,7 @@
-use crate::log_parser::{parse_key_value_pairs, parse_log_line, Kind};
+use crate::log_parser::{
+    parse_key_value_pairs, parse_log_line, parse_offer_extension_number, parse_offer_number,
+    parse_project_reference, parse_sfid, Kind, LogLine,
+};
 use anyhow::{Context as _, Result};
 use axum::http::uri::Uri;
 use sentry::{Client, Hub, Level, Scope};
@@ -6,10 +9,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
-
-use crate::log_parser::{
-    parse_offer_extension_number, parse_offer_number, parse_project_reference, parse_sfid, LogLine,
-};
 
 #[derive(Debug)]
 struct SentryMessage {
