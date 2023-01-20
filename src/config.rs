@@ -1,7 +1,7 @@
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result};
 use sentry::transports::DefaultTransportFactory;
 use std::{borrow::Cow, collections::HashMap, env, sync::Arc};
-use tracing::{debug, info, instrument};
+use tracing::{debug, error, info, instrument};
 
 #[cfg(test)]
 use std::future::Future;
@@ -70,13 +70,15 @@ impl Config {
                         "loaded logplex sentry mapping"
                     );
                 } else {
-                    bail!(
-                        "sentry client is not enabled for {} {} {}",
-                        logplex_token,
-                        sentry_environment,
-                        sentry_dsn
+                    error!(
+                        ?logplex_token,
+                        ?sentry_environment,
+                        ?sentry_dsn,
+                        "sentry client is not enabled",
                     );
                 }
+            } else {
+                error!(name, value, "wrong sentry mapping line format.")
             }
         }
 
