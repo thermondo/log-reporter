@@ -1,4 +1,5 @@
 use crate::{config::Config, extractors::LogplexDrainToken, reporter::process_logs};
+use anyhow::Context as _;
 use axum::{
     extract::{RawBody, State},
     http::StatusCode,
@@ -36,25 +37,35 @@ pub(crate) async fn handle_logs(
         }
     };
 
-    let body = match body::to_bytes(body).await {
+    let body = match body::to_bytes(body)
+        .await
+        .context("could not fetch POST body")
+    {
         Ok(body) => body,
         Err(err) => {
-            warn!("could not fetch POST body: {:?}", err);
+            warn!("{:?}", err);
             return StatusCode::BAD_REQUEST;
         }
     };
 
-    let body_text = match std::str::from_utf8(&body) {
-        Ok(body) => body,
-        Err(err) => {
-            warn!("invalid UTF-8 in body: {:?}", err);
-            return StatusCode::BAD_REQUEST;
-        }
-    };
+    // move decoding, parsing and creating the logmessage
+    // into the "blocking task" threadpool of tokio.
+    tokio::task::spawn_blocking({
+        let sentry_client = sentry_client.clone();
+        move || {
+            let body_text = match std::str::from_utf8(&body).context("invalid UTF-8 in body") {
+                Ok(body) => body,
+                Err(err) => {
+                    warn!("{:?}", err);
+                    return;
+                }
+            };
 
-    if let Err(err) = process_logs(sentry_client.clone(), body_text) {
-        warn!("error processing logs: {:?}", err);
-    }
+            if let Err(err) = process_logs(sentry_client, body_text) {
+                warn!("error processing logs: {:?}", err);
+            }
+        }
+    });
 
     StatusCode::OK
 }
