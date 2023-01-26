@@ -87,14 +87,17 @@ fn generate_timeout_message(
 fn send_to_sentry(sentry_client: Arc<Client>, message: SentryMessage) {
     info!(?message, "reporting timeout to sentry");
 
+    // uses an empty & new scope instead of the
+    // standard scope which would include details of
+    // this specific service.
     let mut scope = Scope::default();
     scope.set_level(Some(Level::Error));
     for (key, value) in message.tags {
         scope.set_tag(&key, &value);
     }
 
+    // the fingerprint is used for grouping the messages in sentry.
     let fingerprint: Vec<_> = message.fingerprint.iter().map(String::as_str).collect();
-
     scope.set_fingerprint(Some(&fingerprint));
 
     let hub = Hub::new(Some(sentry_client), Arc::new(scope));
