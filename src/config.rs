@@ -87,10 +87,29 @@ impl Config {
 
     #[cfg(test)]
     pub(crate) async fn with_captured_sentry_events_async<F>(
-        mut self,
+        self,
         logplex_token: &str,
         f: impl FnOnce(Arc<sentry::Client>, Arc<Config>) -> F,
     ) -> Vec<sentry::protocol::Event<'static>>
+    where
+        F: Future<Output = ()>,
+    {
+        let test_transport = self
+            .with_captured_sentry_transport_async(logplex_token, f)
+            .await;
+        test_transport
+            .fetch_and_clear_envelopes()
+            .iter()
+            .filter_map(|envelope| envelope.event().cloned())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn with_captured_sentry_transport_async<F>(
+        mut self,
+        logplex_token: &str,
+        f: impl FnOnce(Arc<sentry::Client>, Arc<Config>) -> F,
+    ) -> Arc<Arc<sentry::test::TestTransport>>
     where
         F: Future<Output = ()>,
     {
@@ -107,14 +126,8 @@ impl Config {
 
         f(client, Arc::new(self.clone())).await;
 
-        let result = test_transport
-            .fetch_and_clear_envelopes()
-            .iter()
-            .filter_map(|envelope| envelope.event().cloned())
-            .collect();
-
         self.sentry_clients.remove(&logplex_token.to_owned());
-        result
+        test_transport
     }
 
     #[cfg(test)]
