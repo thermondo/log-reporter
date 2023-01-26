@@ -7,14 +7,13 @@ use axum::{
     routing::{get, post},
     Router, TypedHeader,
 };
-use axum_extra::routing::RouterExt;
 use hyper::body;
 use std::sync::Arc;
 use tracing::{debug, instrument, warn};
 
 pub(crate) fn build_app(config: Arc<Config>) -> Router {
     Router::new()
-        .route_with_tsr("/ht", get(health_check))
+        .route("/ht", get(health_check))
         .route("/", post(handle_logs))
         .with_state(config)
 }
