@@ -37,7 +37,7 @@ Configuration can be set using environment variables, more details in the
 ### the service itself
 
 - `PORT` (mandatory): normally set by Heroku, the port the webserver runs on
-- `SENTRY_DSN` (optional): the sentry DSN where the service should _its own_
+- `SENTRY_DSN` (optional): the sentry DSN where the service should send _its own_
   errors to. The sentry client library additional reads some other environment
   variables like `SENTRY_ENVIRONMENT`.
 - `SENTRY_DEBUG` (optional): activates sentry debug logging
