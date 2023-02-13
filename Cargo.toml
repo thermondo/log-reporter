@@ -13,7 +13,7 @@ sentry = "0.29.1"
 sentry-anyhow = { version = "0.29.2", features = ["backtrace"] }
 sentry-panic = "0.29.3"
 sentry-tower = { version = "0.29.2", features = ["http"] }
-sentry-tracing = "0.29.1"
+sentry-tracing = "0.29.3"
 tokio = { version = "1.25.0", features = [
   "rt-multi-thread",
   "macros",
