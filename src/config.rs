@@ -12,6 +12,7 @@ pub(crate) struct Config {
     pub port: u16,
     pub sentry_dsn: Option<String>,
     pub sentry_debug: bool,
+    pub sentry_traces_sample_rate: f32,
     pub sentry_clients: HashMap<String, Arc<sentry::Client>>,
 }
 
@@ -22,6 +23,7 @@ impl Default for Config {
             sentry_dsn: None,
             sentry_debug: false,
             sentry_clients: HashMap::new(),
+            sentry_traces_sample_rate: 0.0,
         }
     }
 }
@@ -32,13 +34,20 @@ impl Config {
         debug!("loading config");
         let mut config = Config {
             port: env::var("PORT")
-                .unwrap_or_else(|_| "3000".into())
-                .parse()
-                .context("could not parse PORT")?,
+                .context("could not find PORT in environment")
+                .and_then(|var| var.parse::<u16>().context("could not parse PORT"))
+                .unwrap_or(3000),
             sentry_dsn: env::var("SENTRY_DSN").ok(),
-            sentry_debug: !(env::var("SENTRY_DEBUG")
-                .unwrap_or_else(|_| "".into())
-                .is_empty()),
+            sentry_traces_sample_rate: env::var("SENTRY_TRACES_SAMPLE_RATE")
+                .context("could not find SENTRY_TRACES_SAMPLE_RATE in environment")
+                .and_then(|var| {
+                    var.parse::<f32>()
+                        .context("could not parse sentry_traces_sample_rate")
+                })
+                .unwrap_or(0.0),
+            sentry_debug: env::var("SENTRY_DEBUG")
+                .map(|var| !var.is_empty())
+                .unwrap_or(false),
             ..Default::default()
         };
 
