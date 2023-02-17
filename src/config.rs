@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result};
+use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
 use std::{borrow::Cow, collections::HashMap, env, sync::Arc};
 use tracing::{debug, error, info, instrument};
@@ -6,13 +7,16 @@ use tracing::{debug, error, info, instrument};
 #[cfg(test)]
 use std::future::Future;
 
-// FIXME: Config shouldn't be `Clone`, but I currently need it for the test helpers
 #[derive(Debug, Clone)]
 pub(crate) struct Config {
     pub port: u16,
     pub sentry_dsn: Option<String>,
     pub sentry_debug: bool,
     pub sentry_clients: HashMap<String, Arc<sentry::Client>>,
+    /// clone this waitgroup for anything that the app needs to wait
+    /// for when shutting down.
+    /// See also [`WaitGroup`](crossbeam_utils::sync::WaitGroup).
+    pub waitgroup: Option<WaitGroup>,
 }
 
 impl Default for Config {
@@ -22,11 +26,17 @@ impl Default for Config {
             sentry_dsn: None,
             sentry_debug: false,
             sentry_clients: HashMap::new(),
+            waitgroup: None,
         }
     }
 }
 
 impl Config {
+    pub(crate) fn with_waitgroup(mut self, waitgroup: WaitGroup) -> Config {
+        self.waitgroup = Some(waitgroup);
+        self
+    }
+
     #[instrument]
     pub(crate) fn init_from_env() -> Result<Config> {
         debug!("loading config");
