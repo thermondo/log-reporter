@@ -34,16 +34,13 @@ impl Config {
         debug!("loading config");
         let mut config = Config {
             port: env::var("PORT")
-                .context("could not find PORT in environment")
-                .and_then(|var| var.parse::<u16>().context("could not parse PORT"))
+                .unwrap_or("".into())
+                .parse::<u16>()
                 .unwrap_or(3000),
             sentry_dsn: env::var("SENTRY_DSN").ok(),
             sentry_traces_sample_rate: env::var("SENTRY_TRACES_SAMPLE_RATE")
-                .context("could not find SENTRY_TRACES_SAMPLE_RATE in environment")
-                .and_then(|var| {
-                    var.parse::<f32>()
-                        .context("could not parse sentry_traces_sample_rate")
-                })
+                .unwrap_or("".into())
+                .parse::<f32>()
                 .unwrap_or(0.0),
             sentry_debug: env::var("SENTRY_DEBUG")
                 .map(|var| !var.is_empty())
