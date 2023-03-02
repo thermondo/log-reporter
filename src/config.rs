@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use sentry::transports::DefaultTransportFactory;
 use std::{borrow::Cow, collections::HashMap, env, sync::Arc};
 use tracing::{debug, error, info, instrument};
