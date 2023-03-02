@@ -45,6 +45,7 @@ async fn main() -> Result<()> {
                 release: heroku_release.map(Cow::Owned),
                 attach_stacktrace: true,
                 debug: config.sentry_debug,
+                traces_sample_rate: config.sentry_traces_sample_rate,
                 ..Default::default()
             }
             .add_integration(sentry_panic::PanicIntegration::default()),
