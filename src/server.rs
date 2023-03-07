@@ -48,17 +48,17 @@ pub(crate) async fn handle_logs(
     };
 
     // move decoding, parsing and creating the logmessage
-    // into the "blocking task" threadpool of tokio.
-    // See
-    // https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html
-    // When the tokio runtime is shut down / dropped, it
-    // will wait until all spawned tasks are finished.
+    // into the main background rayon threadpool.
     //
-    // FIXME: since this is CPU bound, we actually should use a semaphore to
-    // limit the number of tasks, as recommended by the documentation.
-    tokio::task::spawn_blocking({
+    // By default, When the app is shut down, pending tasks
+    // would be dropped by rayon.
+    //
+    // By using a [`WaitGroup`](crossbeam_utils::sync::WaitGroup),
+    // we can wait for any task that holds a cloned instance of it.
+    {
         let sentry_client = sentry_client.clone();
-        move || {
+        let task_wait_ticket = config.waitgroup.clone();
+        rayon::spawn(move || {
             let body_text = match std::str::from_utf8(&body).context("invalid UTF-8 in body") {
                 Ok(body) => body,
                 Err(err) => {
@@ -70,8 +70,12 @@ pub(crate) async fn handle_logs(
             if let Err(err) = process_logs(sentry_client, body_text) {
                 warn!("error processing logs: {:?}", err);
             }
-        }
-    });
+            // we actually don't need the `drop` here,
+            // we only use it so `task_wait_ticket` will be moved into
+            // the closure.
+            drop(task_wait_ticket);
+        });
+    }
 
     StatusCode::OK
 }
@@ -84,6 +88,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use crossbeam_utils::sync::WaitGroup;
     use tower::ServiceExt;
 
     #[tokio::test]
@@ -178,10 +183,11 @@ mod tests {
         assert_eq!(body, "Header of type `logplex-drain-token` was missing");
     }
 
-    #[test]
-    fn test_end_to_end_with_shutdown() {
+    #[tokio::test]
+    async fn test_end_to_end_with_shutdown() {
         let _ = initialize_tracing();
-        let config = Config::default();
+        let wg = WaitGroup::new();
+        let config = Config::default().with_waitgroup(wg.clone());
 
         let input = "
             111 <158>1 2022-12-05T08:59:21.850424+00:00 host heroku router - \
@@ -192,16 +198,8 @@ mod tests {
             status=503 bytes=0 protocol=https\
             ";
 
-        // not using `#[tokio::test]` so we can drop the runtime below
-        // and force the pending blocking tasks to be finished.
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
-        let test_sentry_transport = runtime.block_on(config.with_captured_sentry_transport_async(
-            "real_token",
-            |_, config| async move {
+        let test_sentry_transport = config
+            .with_captured_sentry_transport_async("real_token", |_, config| async move {
                 let app = build_app(config.clone());
                 let response = app
                     .oneshot(
@@ -216,12 +214,11 @@ mod tests {
                 assert_eq!(response.status(), StatusCode::OK);
                 let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
                 assert!(bytes.is_empty());
-            },
-        ));
+            })
+            .await;
 
-        // this should wait for all pending `spawn_blocking` tasks from handling
-        // the request above.
-        drop(runtime);
+        // wait for async tasks to finish
+        wg.wait();
 
         let events: Vec<sentry::protocol::Event<'static>> = test_sentry_transport
             .fetch_and_clear_envelopes()

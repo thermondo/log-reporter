@@ -1,5 +1,6 @@
 use crate::server::build_app;
 use anyhow::Result;
+use crossbeam_utils::sync::WaitGroup;
 use std::{
     borrow::Cow,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -21,7 +22,8 @@ mod test_utils;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    let config = Arc::new(config::Config::init_from_env()?);
+    let waitgroup = WaitGroup::new();
+    let config = Arc::new(config::Config::init_from_env()?.with_waitgroup(waitgroup.clone()));
     info!(?config, "config loaded");
 
     let heroku_release = std::env::var("HEROKU_RELEASE_VERSION").ok();
@@ -69,6 +71,9 @@ async fn main() -> Result<()> {
         .serve(app.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    info!(?waitgroup, "waiting for pending tasks");
+    waitgroup.wait();
 
     Ok(())
 }
