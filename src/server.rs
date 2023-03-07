@@ -55,10 +55,10 @@ pub(crate) async fn handle_logs(
     //
     // By using a [`WaitGroup`](crossbeam_utils::sync::WaitGroup),
     // we can wait for any task that holds a cloned instance of it.
-    rayon::spawn({
+    {
         let sentry_client = sentry_client.clone();
         let task_wait_ticket = config.waitgroup.clone();
-        move || {
+        rayon::spawn(move || {
             let body_text = match std::str::from_utf8(&body).context("invalid UTF-8 in body") {
                 Ok(body) => body,
                 Err(err) => {
@@ -70,9 +70,12 @@ pub(crate) async fn handle_logs(
             if let Err(err) = process_logs(sentry_client, body_text) {
                 warn!("error processing logs: {:?}", err);
             }
+            // we actually don't need the `drop` here,
+            // we only use it so `task_wait_ticket` will be moved into
+            // the closure.
             drop(task_wait_ticket);
-        }
-    });
+        });
+    }
 
     StatusCode::OK
 }
