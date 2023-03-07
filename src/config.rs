@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
 use std::{borrow::Cow, collections::HashMap, env, sync::Arc};
@@ -12,6 +12,7 @@ pub(crate) struct Config {
     pub port: u16,
     pub sentry_dsn: Option<String>,
     pub sentry_debug: bool,
+    pub sentry_traces_sample_rate: f32,
     pub sentry_clients: HashMap<String, Arc<sentry::Client>>,
     /// clone this waitgroup for anything that the app needs to wait
     /// for when shutting down.
@@ -27,6 +28,7 @@ impl Default for Config {
             sentry_debug: false,
             sentry_clients: HashMap::new(),
             waitgroup: None,
+            sentry_traces_sample_rate: 0.0,
         }
     }
 }
@@ -42,13 +44,17 @@ impl Config {
         debug!("loading config");
         let mut config = Config {
             port: env::var("PORT")
-                .unwrap_or_else(|_| "3000".into())
-                .parse()
-                .context("could not parse PORT")?,
+                .unwrap_or("".into())
+                .parse::<u16>()
+                .unwrap_or(3000),
             sentry_dsn: env::var("SENTRY_DSN").ok(),
-            sentry_debug: !(env::var("SENTRY_DEBUG")
-                .unwrap_or_else(|_| "".into())
-                .is_empty()),
+            sentry_traces_sample_rate: env::var("SENTRY_TRACES_SAMPLE_RATE")
+                .unwrap_or("".into())
+                .parse::<f32>()
+                .unwrap_or(0.0),
+            sentry_debug: env::var("SENTRY_DEBUG")
+                .map(|var| !var.is_empty())
+                .unwrap_or(false),
             ..Default::default()
         };
 

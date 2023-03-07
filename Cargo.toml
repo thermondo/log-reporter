@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.69"
-axum = { version = "0.6.7", features = ["headers"] }
+axum = { version = "0.6.10", features = ["headers"] }
 chrono = { version = "0.4.23", default-features = false }
 hyper = "0.14.24"
 crossbeam-utils = "0.8.14"
@@ -16,7 +16,7 @@ sentry-anyhow = { version = "0.30.0", features = ["backtrace"] }
 sentry-panic = "0.30.0"
 sentry-tower = { version = "0.30.0", features = ["http"] }
 sentry-tracing = "0.30.0"
-tokio = { version = "1.25.0", features = [
+tokio = { version = "1.26.0", features = [
   "rt-multi-thread",
   "macros",
   "signal",
