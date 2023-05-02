@@ -265,6 +265,25 @@ mod tests {
     }
 
     #[test]
+    fn test_full_boot_timeout_line_info() {
+        let input = "
+            152 <134>1 2023-04-29T23:11:12.604871+00:00 host heroku web.1 - \
+            Error R10 (Boot timeout) -> \
+            Web process failed to bind to $PORT within 60 seconds of launch\
+            ";
+        let (remainder, result) = parse_log_line(input).expect("parse error");
+        assert!(remainder.is_empty());
+        assert_eq!(
+            result,
+            LogLine {
+                timestamp: DateTime::parse_from_rfc3339("2023-04-29T23:11:12.604871+00:00").unwrap(),
+                kind: Kind::Heroku,
+                source: "web.1".into(), 
+                text: "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch".into(),
+            });
+    }
+
+    #[test]
     fn test_parse_empty_line() {
         let input: &str = "69 <190>1 2022-12-05T20:26:20.860136+00:00 host app dramatiqworker.2 -";
         let (remainder, result) = parse_log_line(input).expect("parse error");
