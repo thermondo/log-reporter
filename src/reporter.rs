@@ -48,7 +48,16 @@ fn route_from_path(path: &str) -> String {
     elements.join("/")
 }
 
-fn generate_timeout_message(
+fn generate_boot_timeout_message(logline: &LogLine) -> Option<SentryMessage> {
+    let server_name = logline.source.clone();
+    Some(SentryMessage {
+        tags: HashMap::from_iter(vec![("server_name".into(), server_name.clone())]),
+        fingerprint: vec!["heroku-dyno-boot-timeout".into(), server_name.clone()],
+        message: format!("boot timeout on {}\n{}", server_name, logline.text),
+    })
+}
+
+fn generate_request_timeout_message(
     logline: &LogLine,
     items: &HashMap<String, String>,
 ) -> Option<SentryMessage> {
@@ -119,7 +128,11 @@ pub(crate) fn process_logs(sentry_client: Arc<Client>, input: &str) -> Result<()
             .map_err(|err| err.to_owned())
             .context("could not parse log line")?;
 
-        if log.kind == Kind::Heroku && log.source == "router" {
+        if !matches!(log.kind, Kind::Heroku) {
+            continue;
+        }
+
+        if log.source == "router" {
             let (_, pairs) = parse_key_value_pairs(&log.text)
                 .map_err(|err| err.to_owned())
                 .with_context(|| format!("could not parse key value pairs from {}", log.text))?;
@@ -147,9 +160,13 @@ pub(crate) fn process_logs(sentry_client: Arc<Client>, input: &str) -> Result<()
             };
 
             if code == "H12" {
-                if let Some(msg) = generate_timeout_message(&log, &map) {
+                if let Some(msg) = generate_request_timeout_message(&log, &map) {
                     send_to_sentry(sentry_client.clone(), msg);
                 }
+            }
+        } else if log.text.starts_with("Error R10 (Boot timeout) ") {
+            if let Some(msg) = generate_boot_timeout_message(&log) {
+                send_to_sentry(sentry_client.clone(), msg);
             }
         }
     }
@@ -194,8 +211,53 @@ mod tests {
     }
 
     #[test]
+    fn test_dyno_boot_timeout_process_log() {
+        let _ = initialize_tracing();
+        let config = Config::default();
+
+        let input = "
+            152 <134>1 2023-04-29T23:11:12.604871+00:00 host heroku web.1 - \
+            Error R10 (Boot timeout) -> \
+            Web process failed to bind to $PORT within 60 seconds of launch\
+            ";
+
+        let events =
+            config.with_captured_sentry_events_sync("logplex_token", |sentry_client, _config| {
+                process_logs(sentry_client, input).expect("error processing logs");
+            });
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].message.as_ref().unwrap(),
+            "boot timeout on web.1\n\
+            Error R10 (Boot timeout) -> \
+            Web process failed to bind to $PORT within 60 seconds of launch"
+        );
+    }
+
+    #[test]
+    fn test_generate_boot_timeout_message() {
+        let msg = generate_boot_timeout_message(
+            &LogLine {
+                timestamp: "2022-12-05T08:59:21.850424+00:00".parse().unwrap(),
+                source: "web.1".into(),
+                kind: Kind::App,
+                text: "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch".into()
+            }).unwrap();
+        assert_eq!(
+            msg.message,
+            "boot timeout on web.1\nError R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch",
+        );
+        assert_eq!(msg.fingerprint, vec!["heroku-dyno-boot-timeout", "web.1"]);
+        assert_eq!(
+            msg.tags,
+            HashMap::from_iter([("server_name".into(), "web.1".into()),])
+        );
+    }
+
+    #[test]
     fn test_generate_full_timeout_message() {
-        let msg = generate_timeout_message(
+        let msg = generate_request_timeout_message(
             &LogLine {
                 timestamp: "2022-12-05T08:59:21.850424+00:00".parse().unwrap(),
                 source: "heroku".into(),
@@ -237,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_generate_minimal_timeout_message() {
-        let msg = generate_timeout_message(
+        let msg = generate_request_timeout_message(
             &LogLine {
                 timestamp: "2022-12-05T08:59:21.850424+00:00".parse().unwrap(),
                 source: "heroku".into(),
