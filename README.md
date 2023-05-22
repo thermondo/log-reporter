@@ -1,10 +1,10 @@
-# heroku timeout sentry reporter
+# heroku sentry reporter
 
 ## motivation
 
-In our Heroku apps we saw that developers tend to overlook timeouts that happen.
+In our Heroku apps we saw that developers tend to overlook some Heroku errors.
 Since we're using [sentry](sentry.io/) for error reporting, we had the idea of
-writing a small service that creates sentry issues for each timeout.
+writing a small service that creates sentry issues for each error.
 
 We now open the codebase up, with the goal to evolve this service into something
 that is useful for more companies.
@@ -16,11 +16,18 @@ Heroku supports
 your Heroku application you can configure a new log drain pointing to this
 log-reporter service. This leads to us getting all log messages.
 
-The service then parses the logs for router log lines, timeouts and generates a
+The service then parses the logs for specific errors and generates a
 sentry report out of it.
 
 So the sentry error grouping works we try to replace some patterns in the path
 which we think represent identifiers.
+
+## errors
+
+Currently we parse & report:
+
+- [H12 - request timeout](https://devcenter.heroku.com/articles/error-codes#h12-request-timeout)
+- [R10 - boot timeout](https://devcenter.heroku.com/articles/error-codes#r10-boot-timeout)
 
 ## deployment
 
