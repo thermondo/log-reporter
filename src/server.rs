@@ -22,6 +22,11 @@ pub(crate) async fn health_check() -> impl IntoResponse {
     StatusCode::OK
 }
 
+#[allow(
+    // open bug in tokio/tracing, see:
+    // https://github.com/tokio-rs/tracing/issues/2503
+    clippy::let_with_type_underscore
+)]
 #[instrument(skip(body, config))]
 pub(crate) async fn handle_logs(
     TypedHeader(logplex_token): TypedHeader<LogplexDrainToken>,
