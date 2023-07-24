@@ -5,5 +5,5 @@ run:
   web: /usr/local/bin/log_reporter
 release:
   command:
-    - ./bin/release.sh
+    - web: /usr/local/bin/log_reporter check
   image: web
