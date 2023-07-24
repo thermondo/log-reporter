@@ -23,9 +23,10 @@ mod test_utils;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    match env::args().nth(1).as_deref() {
+    let all_args = env::args().collect::<Vec<_>>();
+    match all_args.get(1).cloned().as_deref() {
         Some("check") => println!("OK"),
-        Some(cmd) => bail!("unknown command: {}", cmd),
+        Some(_) => bail!("unknown command: {:?}", all_args),
         None => run_server().await?,
     }
 
