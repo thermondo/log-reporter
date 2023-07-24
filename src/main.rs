@@ -1,8 +1,9 @@
 use crate::server::build_app;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use crossbeam_utils::sync::WaitGroup;
 use std::{
     borrow::Cow,
+    env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
@@ -22,6 +23,16 @@ mod test_utils;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
+    match env::args().nth(1).as_deref() {
+        Some("check") => println!("OK"),
+        None => run_server().await?,
+        _ => bail!("unknown command"),
+    }
+
+    Ok(())
+}
+
+async fn run_server() -> Result<()> {
     let waitgroup = WaitGroup::new();
     let config = Arc::new(config::Config::init_from_env()?.with_waitgroup(waitgroup.clone()));
     info!(?config, "config loaded");

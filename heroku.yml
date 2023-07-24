@@ -3,3 +3,7 @@ build:
     web: Dockerfile
 run:
   web: /usr/local/bin/log_reporter
+release:
+  command:
+    - ./bin/release.sh
+  image: web
