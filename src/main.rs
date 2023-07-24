@@ -25,8 +25,8 @@ mod test_utils;
 async fn main() -> Result<()> {
     match env::args().nth(1).as_deref() {
         Some("check") => println!("OK"),
+        Some(cmd) => bail!("unknown command: {}", cmd),
         None => run_server().await?,
-        _ => bail!("unknown command"),
     }
 
     Ok(())
