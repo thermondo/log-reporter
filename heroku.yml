@@ -2,8 +2,8 @@ build:
   docker:
     web: Dockerfile
 run:
-  web: /usr/local/bin/log_reporter
+  web: /app/log_reporter
 release:
   command:
-    - /usr/local/bin/log_reporter check
+    - /app/bin/release.sh
   image: web

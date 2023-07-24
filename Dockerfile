@@ -23,6 +23,8 @@ RUN apt update && \
         ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR app
-COPY --from=builder /app/target/release/log_reporter /usr/local/bin
-ENTRYPOINT ["/usr/local/bin/log_reporter"]
+RUN mkdir -p /app/bin
+WORKDIR /app
+COPY --from=builder /app/target/release/log_reporter /app/
+COPY --from=builder /app/bin/release.sh /app/bin/
+ENTRYPOINT ["/app/log_reporter"]
