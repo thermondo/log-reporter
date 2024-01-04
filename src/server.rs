@@ -1,13 +1,14 @@
 use crate::{config::Config, extractors::LogplexDrainToken, reporter::process_logs};
 use anyhow::Context as _;
 use axum::{
-    extract::{RawBody, State},
+    body::{self, Body},
+    extract::State,
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Router, TypedHeader,
+    Router,
 };
-use hyper::body;
+use axum_extra::TypedHeader;
 use std::sync::Arc;
 use tracing::{debug, instrument, warn};
 
@@ -31,7 +32,7 @@ pub(crate) async fn health_check() -> impl IntoResponse {
 pub(crate) async fn handle_logs(
     TypedHeader(logplex_token): TypedHeader<LogplexDrainToken>,
     State(config): State<Arc<Config>>,
-    RawBody(body): RawBody,
+    body: Body,
 ) -> impl IntoResponse {
     let sentry_client = match config.sentry_clients.get(logplex_token.as_str()) {
         Some(client) => client,
@@ -41,7 +42,7 @@ pub(crate) async fn handle_logs(
         }
     };
 
-    let body = match body::to_bytes(body)
+    let body = match body::to_bytes(body, usize::MAX)
         .await
         .context("could not fetch POST body")
     {
@@ -139,7 +140,9 @@ mod tests {
                     .unwrap();
 
                 assert_eq!(response.status(), StatusCode::OK);
-                let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+                let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
                 assert!(bytes.is_empty());
             })
             .await;
@@ -164,7 +167,9 @@ mod tests {
                     .unwrap();
 
                 assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-                let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+                let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
                 assert!(bytes.is_empty());
             })
             .await;
@@ -182,7 +187,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let body = std::str::from_utf8(&bytes).unwrap();
 
         assert_eq!(body, "Header of type `logplex-drain-token` was missing");
@@ -217,7 +224,9 @@ mod tests {
                     .unwrap();
 
                 assert_eq!(response.status(), StatusCode::OK);
-                let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+                let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
                 assert!(bytes.is_empty());
             })
             .await;

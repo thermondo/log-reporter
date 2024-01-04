@@ -1,4 +1,4 @@
-use axum::headers::{Error, Header, HeaderName, HeaderValue};
+use axum_extra::headers::{Error, Header, HeaderName, HeaderValue};
 
 pub static LOGPLEX_DRAIN_TOKEN: HeaderName = HeaderName::from_static("logplex-drain-token");
 
@@ -41,8 +41,8 @@ impl Header for LogplexDrainToken {
 mod tests {
     use super::*;
 
-    use axum::headers::HeaderMapExt;
     use axum::http::HeaderMap;
+    use axum_extra::headers::HeaderMapExt;
 
     #[test]
     fn test_encode_logplex_drain_token() {
