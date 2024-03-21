@@ -15,6 +15,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 mod config;
 mod extractors;
 mod log_parser;
+mod metrics;
 mod reporter;
 mod server;
 #[cfg(test)]
@@ -58,7 +59,7 @@ async fn main() -> Result<()> {
     };
 
     let port = config.port;
-    let app = build_app(config).layer(
+    let app = build_app(config.clone()).layer(
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
             .layer(sentry_tower::NewSentryLayer::new_from_top())
@@ -75,6 +76,11 @@ async fn main() -> Result<()> {
 
     info!(?waitgroup, "waiting for pending tasks");
     waitgroup.wait();
+
+    // explicitly shut down the sentry clients to flush events
+    for client in config.sentry_clients.values() {
+        client.close(None);
+    }
 
     Ok(())
 }
