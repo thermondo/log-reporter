@@ -63,6 +63,7 @@ pub(crate) async fn handle_logs(
     // we can wait for any task that holds a cloned instance of it.
     {
         let sentry_client = sentry_client.clone();
+        let config = config.clone();
         let task_wait_ticket = config.waitgroup.clone();
         rayon::spawn(move || {
             let body_text = match std::str::from_utf8(&body).context("invalid UTF-8 in body") {
@@ -73,7 +74,7 @@ pub(crate) async fn handle_logs(
                 }
             };
 
-            if let Err(err) = process_logs(sentry_client, body_text) {
+            if let Err(err) = process_logs(&config, sentry_client, body_text) {
                 warn!("error processing logs: {:?}", err);
             }
             // we actually don't need the `drop` here,

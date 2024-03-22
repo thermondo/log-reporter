@@ -2,8 +2,8 @@ use chrono::{DateTime, FixedOffset};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till1, take_while1, take_while_m_n},
-    character::complete::{digit1, multispace0, space0, space1},
-    combinator::{all_consuming, map, map_res, recognize, rest, value, verify},
+    character::complete::{char, digit1, multispace0, space0, space1},
+    combinator::{all_consuming, map, map_res, opt, recognize, rest, value, verify},
     multi::many1,
     sequence::{delimited, preceded, tuple},
     IResult,
@@ -56,12 +56,32 @@ pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {
     )(input)
 }
 
+/// parses dyno log messages
+/// format like:
+///     Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch
+///
+/// see https://devcenter.heroku.com/articles/error-codes#r10-boot-timeout
+pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, &str> {
+    map(
+        tuple((
+            preceded(multispace0, tag("Error")),
+            preceded(space1, take_till1(|c: char| c.is_whitespace())),
+            preceded(
+                space1,
+                delimited(char('('), take_till1(|c: char| c == ')'), char(')')),
+            ),
+            opt(tuple((space1, tag("->"), rest))),
+        )),
+        |(_tag, code, _name, _arrow)| code,
+    )(input)
+}
+
 pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, Vec<(String, String)>> {
     many1(map(
         delimited(
             space0,
             tuple((
-                take_while1(|c: char| c.is_alphanumeric() || c == '_'),
+                take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '#'),
                 tag("="),
                 alt((
                     delimited(tag("\""), take_till1(|c: char| c == '"'), tag("\"")),
@@ -237,7 +257,7 @@ mod tests {
             LogLine {
                 timestamp: DateTime::parse_from_rfc3339("2022-12-05T08:59:21.850424+00:00").unwrap(),
                 kind: Kind::Heroku,
-                source: "router".into(), 
+                source: "router".into(),
                 text: "at=info method=GET path=\"/api/disposition/service/?hub=33\" host=thermondo-backend.herokuapp.com request_id=60fbbe6e-0ea5-4013-ab6a-9d6851fe1c95 fwd=\"80.187.107.115,167.82.231.29\" dyno=web.10 connect=2ms service=864ms status=200 bytes=15055 protocol=https".into()
             });
     }
@@ -259,7 +279,7 @@ mod tests {
             LogLine {
                 timestamp: DateTime::parse_from_rfc3339("2022-12-05T08:59:21.66229+00:00").unwrap(),
                 kind: Kind::App,
-                source: "web.15".into(), 
+                source: "web.15".into(),
                 text: "[r9673 d8512f2b] INFO     [292844f1-49fe-445b-87b3-af87088b7df8] log_request_id.middleware: method=GET path=/api/disposition/foundation/ status=200 user=875".into(),
             });
     }
@@ -278,7 +298,7 @@ mod tests {
             LogLine {
                 timestamp: DateTime::parse_from_rfc3339("2023-04-29T23:11:12.604871+00:00").unwrap(),
                 kind: Kind::Heroku,
-                source: "web.1".into(), 
+                source: "web.1".into(),
                 text: "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch".into(),
             });
     }
@@ -370,5 +390,56 @@ mod tests {
                 ("protocol".into(), "https".into(),),
             ]
         );
+    }
+
+    #[test]
+    fn test_pure_text_log_as_key_value_errors() {
+        let input: &str = "just some text";
+        assert!(parse_key_value_pairs(input).is_err())
+    }
+
+    #[test]
+    fn test_some_key_value_and_some_remainder() {
+        let input: &str = "key=value and some text";
+
+        let (remainder, result) = parse_key_value_pairs(input).expect("parse error");
+        assert_eq!(result, vec![("key".into(), "value".into())]);
+        assert_eq!(remainder, "and some text");
+    }
+
+    #[test]
+    fn test_parse_metric_pairs() {
+        let input: &str = "source=web.1 dyno=heroku.145151706.12daf639-fefc-4fba-9c12-d0f27c0a4604 sample#memory_total=184.68MB sample#memory_rss=158.27MB";
+
+        let (remainder, result) = parse_key_value_pairs(input).expect("parse error");
+        assert!(remainder.is_empty(), "rest: {}", remainder);
+        assert_eq!(
+            result,
+            vec![
+                ("source".into(), "web.1".into()),
+                (
+                    "dyno".into(),
+                    "heroku.145151706.12daf639-fefc-4fba-9c12-d0f27c0a4604".into()
+                ),
+                ("sample#memory_total".into(), "184.68MB".into()),
+                ("sample#memory_rss".into(), "158.27MB".into())
+            ]
+        );
+    }
+
+    #[test_case("R10", "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch")]
+    #[test_case(
+        "R12",
+        "Error R12 (Exit timeout) -> Process failed to exit within 30 seconds of SIGTERM"
+    )]
+    #[test_case("R13", "Error R13 (Attach error) -> Failed to attach to process")]
+    #[test_case("R14", "Error R14 (Memory quota exceeded)")]
+    #[test_case("R15", "Error R15 (Memory quota vastly exceeded)")]
+    #[test_case("R16", "Error R16 (Detached) -> An attached process is not responding to SIGHUP after its external connection was closed.")]
+    #[test_case("R17", "Error R17 (Checksum error) -> Checksum does match expected value. Expected: SHA256:ed5718e83475c780145609cbb2e4f77ec8076f6f59ebc8a916fb790fbdb1ae64 Actual: SHA256:9ca15af16e06625dfd123ebc3472afb0c5091645512b31ac3dd355f0d8cc42c1")]
+    fn test_extract_dyno_error(expected_code: &str, line: &str) {
+        let (remainder, result) = parse_dyno_error_code(line).expect("parse error");
+        assert!(remainder.is_empty(), "rest: {}", remainder);
+        assert_eq!(result, expected_code);
     }
 }

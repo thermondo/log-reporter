@@ -1,0 +1,3 @@
+[[disallowed-methods]]
+path = "sentry::metrics::Metric::send"
+reason = "Metric::send uses the wrong sentry Client for our use-case, use Client::add_metric"
