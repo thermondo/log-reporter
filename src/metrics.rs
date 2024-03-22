@@ -1,4 +1,13 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result};
+use nom::{
+    branch::alt,
+    bytes::complete::{tag, tag_no_case},
+    character::complete::char,
+    combinator::{all_consuming, complete, eof, map, rest, value},
+    number::complete::double,
+    sequence::tuple,
+    IResult,
+};
 use sentry::{
     metrics::{DurationUnit, InformationUnit, Metric, MetricUnit, MetricValue},
     Client,
@@ -6,14 +15,16 @@ use sentry::{
 use std::{borrow::Cow, collections::HashMap};
 use tracing::{debug, warn};
 
+static PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
+
 #[derive(Debug)]
-struct SentryMetric {
-    name: String,
+struct SentryMetric<'a> {
+    name: &'a str,
     value: MetricValue,
     unit: MetricUnit,
 }
 
-impl PartialEq for SentryMetric {
+impl PartialEq for SentryMetric<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
             && self.unit == other.unit
@@ -30,35 +41,46 @@ fn is_metric(key: &str) -> bool {
     key.contains('#')
 }
 
-fn parse_metric_unit(unit: &str) -> MetricUnit {
-    // TODO: convert to `nom::tag_no_case` to safe allocations,
-    // TODO: make a normal parser so it can be combined in spilt_value_and_unit
-    match unit.to_ascii_lowercase().as_ref() {
-        "ms" => MetricUnit::Duration(DurationUnit::MilliSecond),
-        "s" => MetricUnit::Duration(DurationUnit::Second),
-        "mb" => MetricUnit::Information(InformationUnit::MebiByte),
-        "kb" => MetricUnit::Information(InformationUnit::KibiByte),
-        "bytes" => MetricUnit::Information(InformationUnit::Byte),
-        "pages" => MetricUnit::Custom("pages".into()),
-        _ if unit.is_empty() => MetricUnit::None,
-        _ => {
+fn parse_metric_unit(unit: &str) -> IResult<&str, MetricUnit> {
+    alt((
+        value(
+            MetricUnit::Information(InformationUnit::MebiByte),
+            all_consuming(tag_no_case("mb")),
+        ),
+        value(
+            MetricUnit::Information(InformationUnit::KibiByte),
+            all_consuming(tag_no_case("kb")),
+        ),
+        value(
+            MetricUnit::Information(InformationUnit::Byte),
+            all_consuming(tag_no_case("bytes")),
+        ),
+        map(all_consuming(tag_no_case("pages")), |_| PAGES.clone()),
+        value(
+            MetricUnit::Duration(DurationUnit::MilliSecond),
+            all_consuming(tag_no_case("ms")),
+        ),
+        value(
+            MetricUnit::Duration(DurationUnit::Second),
+            all_consuming(tag_no_case("s")),
+        ),
+        value(MetricUnit::None, eof),
+        map(rest, |unit: &str| {
             warn!(unit, "got custom metric unit");
             MetricUnit::Custom(Cow::Owned(unit.to_owned()))
-        }
-    }
+        }),
+    ))(unit)
+}
+
+/// splits a text like `196.79MB` into the numeric value and an optional unit
+fn parse_metric_value_and_unit(value: &str) -> IResult<&str, (f64, MetricUnit)> {
+    tuple((double, parse_metric_unit))(value)
 }
 
 fn split_metric_value_and_unit(value: &str) -> Result<(f64, MetricUnit)> {
-    // TODO: convert to nom
-    let (value, unit) = {
-        if let Some(pos) = value.find(|c: char| !c.is_ascii_digit() && c != '.') {
-            value.split_at(pos)
-        } else {
-            (value, "")
-        }
-    };
-    let value: f64 = value.parse().context("can't parse metric value")?;
-    Ok((value, parse_metric_unit(unit)))
+    complete(parse_metric_value_and_unit)(value)
+        .map_err(|err| err.to_owned().into())
+        .map(|(_, result)| result)
 }
 
 /// parses a key-value pair into a metric
@@ -67,31 +89,33 @@ fn split_metric_value_and_unit(value: &str) -> Result<(f64, MetricUnit)> {
 ///     value => 196.79MB
 /// is already prevously split into key and value,
 /// here we're combining both again into a SentryMetric with name, value, unit.
-fn metric_from_kv<'a>(key: &'a str, value: &'a str) -> Result<SentryMetric> {
-    // TODO: convert to nom
-    let (kind, name) = key
-        .split_once('#')
-        .ok_or_else(|| anyhow!("missing separator in metric name"))?;
+fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> IResult<&'a str, SentryMetric<'a>> {
+    let (_, (metric_value, unit)) = complete(parse_metric_value_and_unit)(value)?;
 
-    let (value, unit) = split_metric_value_and_unit(value)?;
-
-    Ok(SentryMetric {
-        name: name.to_owned(),
-        value: match kind {
-            "sample" => MetricValue::Gauge(value),
-            "count" => MetricValue::Counter(value),
-            "measure" => MetricValue::Distribution(value),
-            _ => bail!("unknown metric kind: {}", kind),
+    map(
+        tuple((
+            alt((tag("sample"), tag("count"), tag("measure"))),
+            char('#'),
+            rest,
+        )),
+        move |(kind, _, name): (&str, _, &str)| SentryMetric {
+            name,
+            value: match kind {
+                "sample" => MetricValue::Gauge(metric_value),
+                "count" => MetricValue::Counter(metric_value),
+                "measure" => MetricValue::Distribution(metric_value),
+                _ => unreachable!(),
+            },
+            unit: unit.clone(),
         },
-        unit,
-    })
+    )(key)
 }
 
 /// report router metrics to the sentry client.
 /// These don't come in the metric format, but are just generated metrics based on the router log.
-pub(crate) fn report_router_metrics<'a, I>(client: &Client, key_value_pairs: I) -> Result<()>
+pub(crate) fn report_router_metrics<'a, 'b, I>(client: &Client, key_value_pairs: I) -> Result<()>
 where
-    I: Iterator<Item = (&'a str, &'a str)>,
+    I: Iterator<Item = (&'a str, &'b str)>,
 {
     for (key, value) in key_value_pairs {
         match key {
@@ -104,17 +128,17 @@ where
                 );
             }
             "connect" => {
-                let (value, unit) = split_metric_value_and_unit(value)?;
+                let (metric_value, unit) = split_metric_value_and_unit(value)?;
                 client.add_metric(
-                    Metric::distribution("router.connect", value)
+                    Metric::distribution("router.connect", metric_value)
                         .with_unit(unit)
                         .finish(),
                 );
             }
             "service" => {
-                let (value, unit) = split_metric_value_and_unit(value)?;
+                let (metric_value, unit) = split_metric_value_and_unit(value)?;
                 client.add_metric(
-                    Metric::distribution("router.service", value)
+                    Metric::distribution("router.service", metric_value)
                         .with_unit(unit)
                         .finish(),
                 );
@@ -160,7 +184,7 @@ where
     for (key, value) in key_value_pairs {
         if is_metric(key) {
             debug!(key, value, "got metric");
-            let metric = match metric_from_kv(key, value) {
+            let (_, metric) = match parse_metric_from_kv(key, value) {
                 Ok(result) => result,
                 Err(err) => {
                     warn!(key, value, ?err, "couldn't parse metric");
@@ -214,10 +238,12 @@ mod tests {
         expected_value: MetricValue,
         expected_unit: MetricUnit,
     ) {
+        let (remainder, result) = parse_metric_from_kv(key, value).unwrap();
+        assert!(remainder.is_empty());
         assert_eq!(
-            metric_from_kv(key, value).unwrap(),
+            result,
             SentryMetric {
-                name: expected_name.into(),
+                name: expected_name,
                 value: expected_value,
                 unit: expected_unit
             }
@@ -232,6 +258,8 @@ mod tests {
     #[test_case("bytes", MetricUnit::Information(InformationUnit::Byte))]
     #[test_case("pages", MetricUnit::Custom("pages".into()))]
     fn test_parse_metric_unit(unit: &str, expected_unit: MetricUnit) {
-        assert_eq!(parse_metric_unit(unit), expected_unit);
+        let (remainder, result) = parse_metric_unit(unit).unwrap();
+        assert!(remainder.is_empty(), "{}", remainder);
+        assert_eq!(result, expected_unit);
     }
 }
