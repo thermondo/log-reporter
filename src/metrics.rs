@@ -1,8 +1,9 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result};
 use nom::{
     branch::alt,
-    bytes::complete::tag_no_case,
-    combinator::{all_consuming, map, rest, value},
+    bytes::complete::{tag, tag_no_case},
+    character::complete::char,
+    combinator::{all_consuming, complete, eof, map, rest, value},
     number::complete::double,
     sequence::tuple,
     IResult,
@@ -14,14 +15,14 @@ use sentry::{
 use std::{borrow::Cow, collections::HashMap};
 use tracing::{debug, warn};
 
+static PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
+
 #[derive(Debug)]
 struct SentryMetric {
     name: String,
     value: MetricValue,
     unit: MetricUnit,
 }
-
-static PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
 
 impl PartialEq for SentryMetric {
     fn eq(&self, other: &Self) -> bool {
@@ -54,7 +55,7 @@ fn parse_metric_unit(unit: &str) -> IResult<&str, MetricUnit> {
             MetricUnit::Information(InformationUnit::Byte),
             all_consuming(tag_no_case("bytes")),
         ),
-        value(PAGES.clone(), all_consuming(tag_no_case("pages"))),
+        map(all_consuming(tag_no_case("pages")), |_| PAGES.clone()),
         value(
             MetricUnit::Duration(DurationUnit::MilliSecond),
             all_consuming(tag_no_case("ms")),
@@ -63,17 +64,15 @@ fn parse_metric_unit(unit: &str) -> IResult<&str, MetricUnit> {
             MetricUnit::Duration(DurationUnit::Second),
             all_consuming(tag_no_case("s")),
         ),
+        value(MetricUnit::None, eof),
         map(rest, |unit: &str| {
-            if unit.is_empty() {
-                MetricUnit::None
-            } else {
-                warn!(unit, "got custom metric unit");
-                MetricUnit::Custom(Cow::Owned(unit.to_owned()))
-            }
+            warn!(unit, "got custom metric unit");
+            MetricUnit::Custom(Cow::Owned(unit.to_owned()))
         }),
     ))(unit)
 }
 
+/// splits a text like `196.79MB` into the numeric value and an optional unit
 fn split_metric_value_and_unit(value: &str) -> IResult<&str, (f64, MetricUnit)> {
     tuple((double, parse_metric_unit))(value)
 }
@@ -84,26 +83,26 @@ fn split_metric_value_and_unit(value: &str) -> IResult<&str, (f64, MetricUnit)> 
 ///     value => 196.79MB
 /// is already prevously split into key and value,
 /// here we're combining both again into a SentryMetric with name, value, unit.
-fn metric_from_kv(key: &str, value: &str) -> Result<SentryMetric> {
-    // TODO: convert to nom
-    let (kind, name) = key
-        .split_once('#')
-        .ok_or_else(|| anyhow!("missing separator in metric name"))?;
+fn metric_from_kv<'a>(key: &'a str, value: &'a str) -> IResult<&'a str, SentryMetric> {
+    let (_, (metric_value, unit)) = complete(split_metric_value_and_unit)(value)?;
 
-    let result = parse_metric_unit(value)?;
-
-    let (_, (metric_value, unit)) = split_metric_value_and_unit(value)?;
-
-    Ok(SentryMetric {
-        name: name.to_owned(),
-        value: match kind {
-            "sample" => MetricValue::Gauge(metric_value),
-            "count" => MetricValue::Counter(metric_value),
-            "measure" => MetricValue::Distribution(metric_value),
-            _ => bail!("unknown metric kind: {}", kind),
+    map(
+        tuple((
+            alt((tag("sample"), tag("count"), tag("measure"))),
+            char('#'),
+            rest,
+        )),
+        move |(kind, _, name): (&str, _, &str)| SentryMetric {
+            name: name.to_owned(),
+            value: match kind {
+                "sample" => MetricValue::Gauge(metric_value),
+                "count" => MetricValue::Counter(metric_value),
+                "measure" => MetricValue::Distribution(metric_value),
+                _ => unreachable!(),
+            },
+            unit: unit.to_owned(),
         },
-        unit,
-    })
+    )(key)
 }
 
 /// report router metrics to the sentry client.
@@ -123,7 +122,9 @@ where
                 );
             }
             "connect" => {
-                let (_, (metric_value, unit)) = split_metric_value_and_unit(value)?;
+                let (_, (metric_value, unit)) =
+                    complete(split_metric_value_and_unit)(value).map_err(|err| err.to_owned())?;
+
                 client.add_metric(
                     Metric::distribution("router.connect", metric_value)
                         .with_unit(unit)
@@ -131,7 +132,8 @@ where
                 );
             }
             "service" => {
-                let (_, (metric_value, unit)) = split_metric_value_and_unit(value)?;
+                let (_, (metric_value, unit)) =
+                    complete(split_metric_value_and_unit)(value).map_err(|err| err.to_owned())?;
                 client.add_metric(
                     Metric::distribution("router.service", metric_value)
                         .with_unit(unit)
@@ -179,7 +181,7 @@ where
     for (key, value) in key_value_pairs {
         if is_metric(key) {
             debug!(key, value, "got metric");
-            let metric = match metric_from_kv(key, value) {
+            let (_, metric) = match metric_from_kv(key, value) {
                 Ok(result) => result,
                 Err(err) => {
                     warn!(key, value, ?err, "couldn't parse metric");
@@ -233,8 +235,10 @@ mod tests {
         expected_value: MetricValue,
         expected_unit: MetricUnit,
     ) {
+        let (remainder, result) = metric_from_kv(key, value).unwrap();
+        assert!(remainder.is_empty());
         assert_eq!(
-            metric_from_kv(key, value).unwrap(),
+            result,
             SentryMetric {
                 name: expected_name.into(),
                 value: expected_value,
