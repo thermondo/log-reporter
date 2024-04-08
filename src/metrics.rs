@@ -15,7 +15,7 @@ use sentry::{
 use std::{borrow::Cow, collections::HashMap};
 use tracing::{debug, warn};
 
-static PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
+const PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
 
 #[derive(Debug)]
 struct SentryMetric<'a> {
@@ -55,7 +55,7 @@ fn parse_metric_unit(unit: &str) -> IResult<&str, MetricUnit> {
             MetricUnit::Information(InformationUnit::Byte),
             all_consuming(tag_no_case("bytes")),
         ),
-        map(all_consuming(tag_no_case("pages")), |_| PAGES.clone()),
+        value(PAGES, all_consuming(tag_no_case("pages"))),
         value(
             MetricUnit::Duration(DurationUnit::MilliSecond),
             all_consuming(tag_no_case("ms")),
