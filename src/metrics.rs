@@ -15,6 +15,8 @@ use sentry::{
 use std::{borrow::Cow, collections::HashMap};
 use tracing::{debug, warn};
 
+use crate::log_parser::LogMap;
+
 const PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
 
 #[derive(Debug)]
@@ -143,15 +145,12 @@ fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> IResult<&'a str, Se
 /// The additional 'a and 'b lifetime bounds in the return value shouldn't be needed because I don't
 /// use anything from the input iterator, but the compiler still wants them:
 /// https://users.rust-lang.org/t/96813/2
-fn generate_router_metrics<'a, 'b, I>(
-    key_value_pairs: I,
-) -> impl Iterator<Item = SentryMetric<'static>> + 'a + 'b
-where
-    I: IntoIterator<Item = (&'a str, &'b str)> + 'a + 'b,
-{
-    key_value_pairs
+fn generate_router_metrics<'a>(
+    pairs: &'a LogMap<'a>,
+) -> impl Iterator<Item = SentryMetric<'static>> + 'a {
+    pairs
         .into_iter()
-        .filter_map(|(key, value)| match key {
+        .filter_map(move |(&key, value)| match key {
             "bytes" => {
                 if let Ok(value) = value.parse::<u32>() {
                     Some(SentryMetric {
@@ -214,11 +213,8 @@ where
 
 /// report router metrics to the sentry client.
 /// These don't come in the metric format, but are just generated metrics based on the router log.
-pub(crate) fn report_router_metrics<'a, 'b, I>(client: &Client, key_value_pairs: I)
-where
-    I: Iterator<Item = (&'a str, &'b str)> + 'a + 'b,
-{
-    for metric in generate_router_metrics(key_value_pairs) {
+pub(crate) fn report_router_metrics<'a, 'b>(client: &Client, pairs: &LogMap) {
+    for metric in generate_router_metrics(pairs) {
         client.add_metric(metric.into());
     }
 }
@@ -232,20 +228,15 @@ where
 /// into tags.
 ///
 /// We don't support annotations yet.
-fn generate_metrics<'a, I>(key_value_pairs: I) -> impl Iterator<Item = SentryMetric<'a>>
-where
-    I: IntoIterator<Item = (&'a str, &'a str)>,
-    I::IntoIter: Clone,
-{
-    let key_value_pairs = key_value_pairs.into_iter();
-
-    let tags: HashMap<&str, &str> = key_value_pairs
-        .clone()
+fn generate_metrics<'a>(pairs: &'a LogMap) -> impl Iterator<Item = SentryMetric<'a>> {
+    let tags: HashMap<&str, &str> = pairs
+        .iter()
         .filter(|(key, _)| !is_metric(key))
+        .map(|(key, value)| (*key, *value))
         .collect();
 
-    key_value_pairs
-        .into_iter()
+    pairs
+        .iter()
         .filter(|(key, _)| is_metric(key))
         .filter_map(move |(key, value)| {
             debug!(key, value, "got metric");
@@ -263,11 +254,8 @@ where
         })
 }
 
-pub(crate) fn report_metrics<'a, I>(client: &Client, key_value_pairs: I)
-where
-    I: Iterator<Item = (&'a str, &'a str)> + Clone,
-{
-    for metric in generate_metrics(key_value_pairs) {
+pub(crate) fn report_metrics(client: &Client, pairs: &LogMap) {
+    for metric in generate_metrics(pairs) {
         debug!(?metric, "sending metric");
         client.add_metric(metric.into());
     }
@@ -331,13 +319,13 @@ mod tests {
     #[test_case("bytes")]
     fn test_router_metrics_skips_over_invalid_value(metric_name: &str) {
         let result: Vec<_> =
-            generate_router_metrics(vec![(metric_name, "invalid_value")]).collect();
+            generate_router_metrics(&LogMap::from_iter([(metric_name, "invalid_value")])).collect();
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_generate_router_metrics_normal() {
-        let result: Vec<_> = generate_router_metrics(vec![
+        let result: Vec<_> = generate_router_metrics(&LogMap::from_iter([
             ("at", "info"),
             ("method", "GET"),
             ("path", "/api/disposition/service/?hub=33"),
@@ -350,11 +338,17 @@ mod tests {
             ("status", "200"),
             ("bytes", "15055"),
             ("protocol", "https"),
-        ])
+        ]))
         .collect();
         assert_eq!(
             result,
             vec![
+                SentryMetric {
+                    name: "router.bytes",
+                    value: MetricValue::Distribution(15055.0),
+                    unit: MetricUnit::Information(InformationUnit::Byte),
+                    ..Default::default()
+                },
                 SentryMetric {
                     name: "router.connect",
                     value: MetricValue::Distribution(2.0),
@@ -373,18 +367,12 @@ mod tests {
                     unit: MetricUnit::None,
                     ..Default::default()
                 },
-                SentryMetric {
-                    name: "router.bytes",
-                    value: MetricValue::Distribution(15055.0),
-                    unit: MetricUnit::Information(InformationUnit::Byte),
-                    ..Default::default()
-                },
             ]
         );
     }
     #[test]
     fn test_generate_router_metrics_timeout() {
-        let result: Vec<_> = generate_router_metrics(vec![
+        let result: Vec<_> = generate_router_metrics(&LogMap::from_iter([
             ("at", "error"),
             ("code", "H12"),
             ("desc", "Request timeout"),
@@ -399,11 +387,17 @@ mod tests {
             ("status", "503"),
             ("bytes", "0"),
             ("protocol", "https"),
-        ])
+        ]))
         .collect();
         assert_eq!(
             result,
             vec![
+                SentryMetric {
+                    name: "router.bytes",
+                    value: MetricValue::Distribution(0.0),
+                    unit: MetricUnit::Information(InformationUnit::Byte),
+                    ..Default::default()
+                },
                 SentryMetric {
                     name: "router.connect",
                     value: MetricValue::Distribution(0.0),
@@ -422,19 +416,13 @@ mod tests {
                     unit: MetricUnit::None,
                     ..Default::default()
                 },
-                SentryMetric {
-                    name: "router.bytes",
-                    value: MetricValue::Distribution(0.0),
-                    unit: MetricUnit::Information(InformationUnit::Byte),
-                    ..Default::default()
-                }
             ]
         );
     }
 
     #[test]
     fn test_generate_metrics() {
-        let result: Vec<_> = generate_metrics(vec![
+        let pairs = LogMap::from_iter([
             ("source", "dramatiqworker.1"),
             (
                 "dyno",
@@ -447,8 +435,8 @@ mod tests {
             ("sample#memory_pgpgin", "3244pages"),
             ("sample#memory_pgpgout", "176pages"),
             ("sample#memory_quota", "512.00MB"),
-        ])
-        .collect();
+        ]);
+        let result: Vec<_> = generate_metrics(&pairs).collect();
 
         let wanted_tags = HashMap::from_iter([
             ("source", "dramatiqworker.1"),
@@ -462,26 +450,8 @@ mod tests {
             result,
             vec![
                 SentryMetric {
-                    name: "memory_total",
-                    value: MetricValue::Gauge(110.7),
-                    unit: MetricUnit::Information(InformationUnit::MebiByte),
-                    tags: wanted_tags.clone(),
-                },
-                SentryMetric {
-                    name: "memory_rss",
-                    value: MetricValue::Gauge(89.61),
-                    unit: MetricUnit::Information(InformationUnit::MebiByte),
-                    tags: wanted_tags.clone(),
-                },
-                SentryMetric {
                     name: "memory_cache",
                     value: MetricValue::Gauge(20.91),
-                    unit: MetricUnit::Information(InformationUnit::MebiByte),
-                    tags: wanted_tags.clone(),
-                },
-                SentryMetric {
-                    name: "memory_swap",
-                    value: MetricValue::Gauge(0.18),
                     unit: MetricUnit::Information(InformationUnit::MebiByte),
                     tags: wanted_tags.clone(),
                 },
@@ -502,7 +472,25 @@ mod tests {
                     value: MetricValue::Gauge(512.0),
                     unit: MetricUnit::Information(InformationUnit::MebiByte),
                     tags: wanted_tags.clone(),
-                }
+                },
+                SentryMetric {
+                    name: "memory_rss",
+                    value: MetricValue::Gauge(89.61),
+                    unit: MetricUnit::Information(InformationUnit::MebiByte),
+                    tags: wanted_tags.clone(),
+                },
+                SentryMetric {
+                    name: "memory_swap",
+                    value: MetricValue::Gauge(0.18),
+                    unit: MetricUnit::Information(InformationUnit::MebiByte),
+                    tags: wanted_tags.clone(),
+                },
+                SentryMetric {
+                    name: "memory_total",
+                    value: MetricValue::Gauge(110.7),
+                    unit: MetricUnit::Information(InformationUnit::MebiByte),
+                    tags: wanted_tags.clone(),
+                },
             ]
         )
     }

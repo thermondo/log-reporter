@@ -8,6 +8,7 @@ use nom::{
     sequence::{delimited, preceded, tuple},
     IResult,
 };
+use std::collections::BTreeMap;
 use tracing::instrument;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -17,12 +18,14 @@ pub(crate) enum Kind {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct LogLine {
+pub(crate) struct LogLine<'a> {
     pub timestamp: DateTime<FixedOffset>,
-    pub source: String,
+    pub source: &'a str,
     pub kind: Kind,
-    pub text: String,
+    pub text: &'a str,
 }
+
+pub(crate) type LogMap<'a> = BTreeMap<&'a str, &'a str>;
 
 #[instrument]
 pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {
@@ -49,9 +52,9 @@ pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {
         )),
         |(_, _, timestamp, _, kind, source, text)| LogLine {
             timestamp,
-            source: source.to_owned(),
+            source,
             kind,
-            text: text.to_owned(),
+            text,
         },
     )(input)
 }
@@ -76,22 +79,25 @@ pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, &str> {
     )(input)
 }
 
-pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, Vec<(&str, &str)>> {
-    many1(map(
-        delimited(
-            space0,
-            tuple((
-                take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '#'),
-                tag("="),
-                alt((
-                    delimited(tag("\""), take_till1(|c: char| c == '"'), tag("\"")),
-                    take_till1(|c: char| c.is_whitespace()),
+pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, LogMap> {
+    map(
+        many1(map(
+            delimited(
+                space0,
+                tuple((
+                    take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '#'),
+                    tag("="),
+                    alt((
+                        delimited(tag("\""), take_till1(|c: char| c == '"'), tag("\"")),
+                        take_till1(|c: char| c.is_whitespace()),
+                    )),
                 )),
-            )),
-            space0,
-        ),
-        |(key, _, value): (&str, &str, &str)| (key, value),
-    ))(input)
+                space0,
+            ),
+            |(key, _, value): (&str, &str, &str)| (key, value),
+        )),
+        |pairs| pairs.into_iter().collect(),
+    )(input)
 }
 
 pub(crate) fn parse_sfid(input: &str) -> IResult<&str, &str> {
@@ -257,8 +263,8 @@ mod tests {
             LogLine {
                 timestamp: DateTime::parse_from_rfc3339("2022-12-05T08:59:21.850424+00:00").unwrap(),
                 kind: Kind::Heroku,
-                source: "router".into(),
-                text: "at=info method=GET path=\"/api/disposition/service/?hub=33\" host=thermondo-backend.herokuapp.com request_id=60fbbe6e-0ea5-4013-ab6a-9d6851fe1c95 fwd=\"80.187.107.115,167.82.231.29\" dyno=web.10 connect=2ms service=864ms status=200 bytes=15055 protocol=https".into()
+                source: "router",
+                text: "at=info method=GET path=\"/api/disposition/service/?hub=33\" host=thermondo-backend.herokuapp.com request_id=60fbbe6e-0ea5-4013-ab6a-9d6851fe1c95 fwd=\"80.187.107.115,167.82.231.29\" dyno=web.10 connect=2ms service=864ms status=200 bytes=15055 protocol=https"
             });
     }
 
@@ -279,8 +285,8 @@ mod tests {
             LogLine {
                 timestamp: DateTime::parse_from_rfc3339("2022-12-05T08:59:21.66229+00:00").unwrap(),
                 kind: Kind::App,
-                source: "web.15".into(),
-                text: "[r9673 d8512f2b] INFO     [292844f1-49fe-445b-87b3-af87088b7df8] log_request_id.middleware: method=GET path=/api/disposition/foundation/ status=200 user=875".into(),
+                source: "web.15",
+                text: "[r9673 d8512f2b] INFO     [292844f1-49fe-445b-87b3-af87088b7df8] log_request_id.middleware: method=GET path=/api/disposition/foundation/ status=200 user=875",
             });
     }
 
@@ -298,8 +304,8 @@ mod tests {
             LogLine {
                 timestamp: DateTime::parse_from_rfc3339("2023-04-29T23:11:12.604871+00:00").unwrap(),
                 kind: Kind::Heroku,
-                source: "web.1".into(),
-                text: "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch".into(),
+                source: "web.1",
+                text: "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch",
             });
     }
 
@@ -314,8 +320,8 @@ mod tests {
                 timestamp: DateTime::parse_from_rfc3339("2022-12-05T20:26:20.860136+00:00")
                     .unwrap(),
                 kind: Kind::App,
-                source: "dramatiqworker.2".into(),
-                text: "".into(),
+                source: "dramatiqworker.2",
+                text: "",
             }
         );
     }
@@ -335,20 +341,20 @@ mod tests {
 
         assert_eq!(
             result,
-            vec![
+            LogMap::from_iter([
                 ("at", "info"),
-                ("method", "GET"),
-                ("path", "/api/disposition/service/?hub=33"),
-                ("host", "thermondo-backend.herokuapp.com"),
-                ("request_id", "60fbbe6e-0ea5-4013-ab6a-9d6851fe1c95"),
-                ("fwd", "80.187.107.115,167.82.231.29"),
-                ("dyno", "web.10"),
-                ("connect", "2ms"),
-                ("service", "864ms"),
-                ("status", "200"),
-                ("bytes", "15055"),
-                ("protocol", "https"),
-            ]
+                ("method", "GET",),
+                ("path", "/api/disposition/service/?hub=33",),
+                ("host", "thermondo-backend.herokuapp.com",),
+                ("request_id", "60fbbe6e-0ea5-4013-ab6a-9d6851fe1c95",),
+                ("fwd", "80.187.107.115,167.82.231.29",),
+                ("dyno", "web.10",),
+                ("connect", "2ms",),
+                ("service", "864ms",),
+                ("status", "200",),
+                ("bytes", "15055",),
+                ("protocol", "https",),
+            ])
         );
     }
 
@@ -367,22 +373,22 @@ mod tests {
 
         assert_eq!(
             result,
-            vec![
+            LogMap::from_iter([
                 ("at", "error"),
                 ("code", "H12"),
                 ("desc", "Request timeout"),
-                ("method", "GET"),
-                ("path", "/"),
-                ("host", "myapp.herokuapp.com"),
+                ("method", "GET",),
+                ("path", "/",),
+                ("host", "myapp.herokuapp.com",),
                 ("request_id", "8601b555-6a83-4c12-8269-97c8e32cdb22",),
                 ("fwd", "204.204.204.204"),
-                ("dyno", "web.1"),
-                ("connect", "0ms"),
-                ("service", "30000ms"),
-                ("status", "503"),
-                ("bytes", "0"),
-                ("protocol", "https"),
-            ]
+                ("dyno", "web.1",),
+                ("connect", "0ms",),
+                ("service", "30000ms",),
+                ("status", "503",),
+                ("bytes", "0",),
+                ("protocol", "https",),
+            ])
         );
     }
 
@@ -397,7 +403,7 @@ mod tests {
         let input: &str = "key=value and some text";
 
         let (remainder, result) = parse_key_value_pairs(input).expect("parse error");
-        assert_eq!(result, vec![("key", "value")]);
+        assert_eq!(result, LogMap::from_iter([("key", "value")]));
         assert_eq!(remainder, "and some text");
     }
 
@@ -409,7 +415,7 @@ mod tests {
         assert!(remainder.is_empty(), "rest: {}", remainder);
         assert_eq!(
             result,
-            vec![
+            LogMap::from_iter([
                 ("source", "web.1"),
                 (
                     "dyno",
@@ -417,7 +423,7 @@ mod tests {
                 ),
                 ("sample#memory_total", "184.68MB"),
                 ("sample#memory_rss", "158.27MB")
-            ]
+            ])
         );
     }
 

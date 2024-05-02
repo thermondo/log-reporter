@@ -2,7 +2,7 @@ use crate::{
     config::Config,
     log_parser::{
         parse_dyno_error_code, parse_key_value_pairs, parse_log_line, parse_offer_extension_number,
-        parse_offer_number, parse_project_reference, parse_sfid, Kind, LogLine,
+        parse_offer_number, parse_project_reference, parse_sfid, Kind, LogLine, LogMap,
     },
     metrics::{report_metrics, report_router_metrics},
 };
@@ -53,18 +53,15 @@ fn route_from_path(path: &str) -> String {
 }
 
 fn generate_boot_timeout_message(logline: &LogLine) -> Option<SentryMessage> {
-    let server_name = logline.source.clone();
+    let server_name = logline.source;
     Some(SentryMessage {
-        tags: HashMap::from_iter(vec![("server_name".into(), server_name.clone())]),
-        fingerprint: vec!["heroku-dyno-boot-timeout".into(), server_name.clone()],
+        tags: HashMap::from_iter(vec![("server_name".into(), server_name.into())]),
+        fingerprint: vec!["heroku-dyno-boot-timeout".into(), server_name.into()],
         message: format!("boot timeout on {}\n{}", server_name, logline.text),
     })
 }
 
-fn generate_request_timeout_message(
-    logline: &LogLine,
-    items: &HashMap<&str, &str>,
-) -> Option<SentryMessage> {
+fn generate_request_timeout_message(logline: &LogLine, items: &LogMap) -> Option<SentryMessage> {
     let mut tags: HashMap<String, String> = HashMap::new();
 
     let path = items.get("path")?;
@@ -127,7 +124,6 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
         if line.is_empty() {
             continue;
         }
-
         let (_, log) = parse_log_line(line)
             .map_err(|err| err.to_owned())
             .context("could not parse log line")?;
@@ -140,14 +136,12 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
         };
 
         if matches!(log.kind, Kind::Heroku) && log.source == "router" {
-            let pairs = parse_pairs()?;
+            let map = parse_pairs()?;
 
             if config.sentry_report_metrics {
                 debug!("trying to report router metrics");
-                report_router_metrics(&sentry_client, pairs.iter().copied());
+                report_router_metrics(&sentry_client, &map);
             }
-
-            let map: HashMap<&str, &str> = HashMap::from_iter(pairs.into_iter());
 
             debug!(?map, "got router log");
 
@@ -190,7 +184,7 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
         } else if config.sentry_report_metrics {
             if let Ok(pairs) = parse_pairs() {
                 debug!("trying to report generic metrics");
-                report_metrics(&sentry_client, pairs.iter().copied())
+                report_metrics(&sentry_client, &pairs);
             }
         }
     }
@@ -264,9 +258,9 @@ mod tests {
         let msg = generate_boot_timeout_message(
             &LogLine {
                 timestamp: "2022-12-05T08:59:21.850424+00:00".parse().unwrap(),
-                source: "web.1".into(),
+                source: "web.1",
                 kind: Kind::App,
-                text: "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch".into()
+                text: "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch"
             }).unwrap();
         assert_eq!(
             msg.message,
@@ -284,11 +278,11 @@ mod tests {
         let msg = generate_request_timeout_message(
             &LogLine {
                 timestamp: "2022-12-05T08:59:21.850424+00:00".parse().unwrap(),
-                source: "heroku".into(),
+                source: "heroku",
                 kind: Kind::Heroku,
-                text: "doesn't matter here".into(),
+                text: "doesn't matter here",
             },
-            &HashMap::from_iter([
+            &LogMap::from_iter([
                 ("path", "/path/"),
                 ("dyno", "web.1"),
                 ("host", "www.thermondo.de"),
@@ -323,11 +317,11 @@ mod tests {
         let msg = generate_request_timeout_message(
             &LogLine {
                 timestamp: "2022-12-05T08:59:21.850424+00:00".parse().unwrap(),
-                source: "heroku".into(),
+                source: "heroku",
                 kind: Kind::Heroku,
-                text: "doesn't matter here".into(),
+                text: "doesn't matter here",
             },
-            &HashMap::from_iter([("path", "/path/1234/"), ("host", "www.thermondo.de")]),
+            &LogMap::from_iter([("path", "/path/1234/"), ("host", "www.thermondo.de")]),
         )
         .unwrap();
         assert_eq!(
