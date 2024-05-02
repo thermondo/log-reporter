@@ -117,63 +117,65 @@ fn generate_router_metrics<'a, 'b, I>(
     key_value_pairs: I,
 ) -> impl Iterator<Item = SentryMetric<'static>> + 'a + 'b
 where
-    I: Iterator<Item = (&'a str, &'b str)> + 'a + 'b,
+    I: IntoIterator<Item = (&'a str, &'b str)> + 'a + 'b,
 {
-    key_value_pairs.filter_map(|(key, value)| match key {
-        "bytes" => {
-            if let Ok(value) = value.parse::<u32>() {
-                Some(SentryMetric {
-                    name: "router.bytes",
-                    value: MetricValue::Distribution(value as f64),
-                    unit: MetricUnit::Information(InformationUnit::Byte),
-                })
-            } else {
-                warn!(value, "could not parse router.bytes value");
-                None
+    key_value_pairs
+        .into_iter()
+        .filter_map(|(key, value)| match key {
+            "bytes" => {
+                if let Ok(value) = value.parse::<u32>() {
+                    Some(SentryMetric {
+                        name: "router.bytes",
+                        value: MetricValue::Distribution(value as f64),
+                        unit: MetricUnit::Information(InformationUnit::Byte),
+                    })
+                } else {
+                    warn!(value, "could not parse router.bytes value");
+                    None
+                }
             }
-        }
-        "connect" => match split_metric_value_and_unit(value) {
-            Ok((metric_value, unit)) => Some(SentryMetric {
-                name: "router.connect",
-                value: MetricValue::Distribution(metric_value),
-                unit,
-            }),
-            Err(err) => {
-                warn!(?err, value, "could not parse router.connect value");
-                None
+            "connect" => match split_metric_value_and_unit(value) {
+                Ok((metric_value, unit)) => Some(SentryMetric {
+                    name: "router.connect",
+                    value: MetricValue::Distribution(metric_value),
+                    unit,
+                }),
+                Err(err) => {
+                    warn!(?err, value, "could not parse router.connect value");
+                    None
+                }
+            },
+            "service" => match split_metric_value_and_unit(value) {
+                Ok((metric_value, unit)) => Some(SentryMetric {
+                    name: "router.service",
+                    value: MetricValue::Distribution(metric_value),
+                    unit,
+                }),
+                Err(err) => {
+                    warn!(?err, value, "could not parse router.service value");
+                    None
+                }
+            },
+            "status" => {
+                if let Ok(status) = value.parse::<u16>() {
+                    Some(SentryMetric {
+                        name: match status {
+                            200..=299 => "router.status.2xx",
+                            300..=399 => "router.status.3xx",
+                            400..=499 => "router.status.4xx",
+                            500..=599 => "router.status.5xx",
+                            _ => "router.status.xxx",
+                        },
+                        value: MetricValue::Counter(1.0),
+                        unit: MetricUnit::None,
+                    })
+                } else {
+                    warn!(value, "could not parse status value");
+                    None
+                }
             }
-        },
-        "service" => match split_metric_value_and_unit(value) {
-            Ok((metric_value, unit)) => Some(SentryMetric {
-                name: "router.service",
-                value: MetricValue::Distribution(metric_value),
-                unit,
-            }),
-            Err(err) => {
-                warn!(?err, value, "could not parse router.service value");
-                None
-            }
-        },
-        "status" => {
-            if let Ok(status) = value.parse::<u16>() {
-                Some(SentryMetric {
-                    name: match status {
-                        200..=299 => "router.status.2xx",
-                        300..=399 => "router.status.3xx",
-                        400..=499 => "router.status.4xx",
-                        500..=599 => "router.status.5xx",
-                        _ => "router.status.xxx",
-                    },
-                    value: MetricValue::Counter(1.0),
-                    unit: MetricUnit::None,
-                })
-            } else {
-                warn!(value, "could not parse status value");
-                None
-            }
-        }
-        _ => None,
-    })
+            _ => None,
+        })
 }
 
 /// report router metrics to the sentry client.
@@ -326,5 +328,104 @@ mod tests {
         let (remainder, result) = parse_metric_unit(unit).unwrap();
         assert!(remainder.is_empty(), "{}", remainder);
         assert_eq!(result, expected_unit);
+    }
+
+    #[test_case("connect")]
+    #[test_case("service")]
+    #[test_case("status")]
+    #[test_case("bytes")]
+    fn test_router_metrics_skips_over_invalid_value(metric_name: &str) {
+        let result: Vec<_> =
+            generate_router_metrics(vec![(metric_name, "invalid_value")]).collect();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_generate_router_metrics_normal() {
+        let result: Vec<_> = generate_router_metrics(vec![
+            ("at", "info"),
+            ("method", "GET"),
+            ("path", "/api/disposition/service/?hub=33"),
+            ("host", "thermondo-backend.herokuapp.com"),
+            ("request_id", "60fbbe6e-0ea5-4013-ab6a-9d6851fe1c95"),
+            ("fwd", "80.187.107.115,167.82.231.29"),
+            ("dyno", "web.10"),
+            ("connect", "2ms"),
+            ("service", "864ms"),
+            ("status", "200"),
+            ("bytes", "15055"),
+            ("protocol", "https"),
+        ])
+        .collect();
+        assert_eq!(
+            result,
+            vec![
+                SentryMetric {
+                    name: "router.connect",
+                    value: MetricValue::Distribution(2.0),
+                    unit: MetricUnit::Duration(DurationUnit::MilliSecond),
+                },
+                SentryMetric {
+                    name: "router.service",
+                    value: MetricValue::Distribution(864.0),
+                    unit: MetricUnit::Duration(DurationUnit::MilliSecond),
+                },
+                SentryMetric {
+                    name: "router.status.2xx",
+                    value: MetricValue::Counter(1.0),
+                    unit: MetricUnit::None,
+                },
+                SentryMetric {
+                    name: "router.bytes",
+                    value: MetricValue::Distribution(15055.0),
+                    unit: MetricUnit::Information(InformationUnit::Byte),
+                },
+            ]
+        );
+    }
+    #[test]
+    fn test_generate_router_metrics_timeout() {
+        let result: Vec<_> = generate_router_metrics(vec![
+            ("at", "error"),
+            ("code", "H12"),
+            ("desc", "Request timeout"),
+            ("method", "GET"),
+            ("path", "/"),
+            ("host", "myapp.herokuapp.com"),
+            ("request_id", "8601b555-6a83-4c12-8269-97c8e32cdb22"),
+            ("fwd", "204.204.204.204"),
+            ("dyno", "web.1"),
+            ("connect", "0ms"),
+            ("service", "30000ms"),
+            ("status", "503"),
+            ("bytes", "0"),
+            ("protocol", "https"),
+        ])
+        .collect();
+        assert_eq!(
+            result,
+            vec![
+                SentryMetric {
+                    name: "router.connect",
+                    value: MetricValue::Distribution(0.0),
+                    unit: MetricUnit::Duration(DurationUnit::MilliSecond),
+                },
+                SentryMetric {
+                    name: "router.service",
+                    value: MetricValue::Distribution(30000.0),
+                    unit: MetricUnit::Duration(DurationUnit::MilliSecond),
+                },
+                SentryMetric {
+                    name: "router.status.5xx",
+                    value: MetricValue::Counter(1.0),
+                    unit: MetricUnit::None
+                },
+                SentryMetric {
+                    name: "router.bytes",
+                    value: MetricValue::Distribution(0.0),
+                    unit: MetricUnit::Information(InformationUnit::Byte),
+                }
+            ]
+        );
     }
 }
