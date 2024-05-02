@@ -248,7 +248,7 @@ fn generate_metrics<'a>(pairs: &'a LogMap) -> impl Iterator<Item = SentryMetric<
                 }
             };
 
-            metric.tags = tags.clone();
+            metric.tags.clone_from(&tags);
 
             Some(metric)
         })
