@@ -132,14 +132,14 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
             .map_err(|err| err.to_owned())
             .context("could not parse log line")?;
 
-        // try to parse key value pairs, might fail or might be successful,
-        // depending on the kind of log-line we are seeing here.
-        let parsed_key_value_pairs: Result<_> = parse_key_value_pairs(&log.text)
-            .map_err(|err| err.to_owned())
-            .with_context(|| format!("could not parse key value pairs from {}", log.text));
+        let parse_pairs = || {
+            parse_key_value_pairs(&log.text)
+                .map_err(|err| err.to_owned())
+                .with_context(|| format!("could not parse key value pairs from {}", log.text))
+        };
 
         if matches!(log.kind, Kind::Heroku) && log.source == "router" {
-            let (_, pairs) = parsed_key_value_pairs?;
+            let (_, pairs) = parse_pairs()?;
 
             if config.sentry_report_metrics {
                 debug!("trying to report router metrics");
@@ -190,7 +190,7 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
                 }
             }
         } else if config.sentry_report_metrics {
-            if let Ok((_remainder, pairs)) = parsed_key_value_pairs {
+            if let Ok((_remainder, pairs)) = parse_pairs() {
                 debug!("trying to report generic metrics");
                 report_metrics(
                     &sentry_client,
