@@ -76,7 +76,7 @@ pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, &str> {
     )(input)
 }
 
-pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, Vec<(String, String)>> {
+pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, Vec<(&str, &str)>> {
     many1(map(
         delimited(
             space0,
@@ -90,7 +90,7 @@ pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, Vec<(String, S
             )),
             space0,
         ),
-        |(key, _, value): (&str, &str, &str)| (key.to_owned(), value.to_owned()),
+        |(key, _, value): (&str, &str, &str)| (key, value),
     ))(input)
 }
 
@@ -336,21 +336,18 @@ mod tests {
         assert_eq!(
             result,
             vec![
-                ("at".into(), "info".into()),
-                ("method".into(), "GET".into(),),
-                ("path".into(), "/api/disposition/service/?hub=33".into(),),
-                ("host".into(), "thermondo-backend.herokuapp.com".into(),),
-                (
-                    "request_id".into(),
-                    "60fbbe6e-0ea5-4013-ab6a-9d6851fe1c95".into(),
-                ),
-                ("fwd".into(), "80.187.107.115,167.82.231.29".into(),),
-                ("dyno".into(), "web.10".into(),),
-                ("connect".into(), "2ms".into(),),
-                ("service".into(), "864ms".into(),),
-                ("status".into(), "200".into(),),
-                ("bytes".into(), "15055".into(),),
-                ("protocol".into(), "https".into(),),
+                ("at", "info"),
+                ("method", "GET"),
+                ("path", "/api/disposition/service/?hub=33"),
+                ("host", "thermondo-backend.herokuapp.com"),
+                ("request_id", "60fbbe6e-0ea5-4013-ab6a-9d6851fe1c95"),
+                ("fwd", "80.187.107.115,167.82.231.29"),
+                ("dyno", "web.10"),
+                ("connect", "2ms"),
+                ("service", "864ms"),
+                ("status", "200"),
+                ("bytes", "15055"),
+                ("protocol", "https"),
             ]
         );
     }
@@ -371,23 +368,20 @@ mod tests {
         assert_eq!(
             result,
             vec![
-                ("at".into(), "error".into()),
-                ("code".into(), "H12".into()),
-                ("desc".into(), "Request timeout".into()),
-                ("method".into(), "GET".into(),),
-                ("path".into(), "/".into(),),
-                ("host".into(), "myapp.herokuapp.com".into(),),
-                (
-                    "request_id".into(),
-                    "8601b555-6a83-4c12-8269-97c8e32cdb22".into(),
-                ),
-                ("fwd".into(), "204.204.204.204".into()),
-                ("dyno".into(), "web.1".into(),),
-                ("connect".into(), "0ms".into(),),
-                ("service".into(), "30000ms".into(),),
-                ("status".into(), "503".into(),),
-                ("bytes".into(), "0".into(),),
-                ("protocol".into(), "https".into(),),
+                ("at", "error"),
+                ("code", "H12"),
+                ("desc", "Request timeout"),
+                ("method", "GET"),
+                ("path", "/"),
+                ("host", "myapp.herokuapp.com"),
+                ("request_id", "8601b555-6a83-4c12-8269-97c8e32cdb22",),
+                ("fwd", "204.204.204.204"),
+                ("dyno", "web.1"),
+                ("connect", "0ms"),
+                ("service", "30000ms"),
+                ("status", "503"),
+                ("bytes", "0"),
+                ("protocol", "https"),
             ]
         );
     }
@@ -403,7 +397,7 @@ mod tests {
         let input: &str = "key=value and some text";
 
         let (remainder, result) = parse_key_value_pairs(input).expect("parse error");
-        assert_eq!(result, vec![("key".into(), "value".into())]);
+        assert_eq!(result, vec![("key", "value")]);
         assert_eq!(remainder, "and some text");
     }
 
@@ -416,13 +410,13 @@ mod tests {
         assert_eq!(
             result,
             vec![
-                ("source".into(), "web.1".into()),
+                ("source", "web.1"),
                 (
-                    "dyno".into(),
-                    "heroku.145151706.12daf639-fefc-4fba-9c12-d0f27c0a4604".into()
+                    "dyno",
+                    "heroku.145151706.12daf639-fefc-4fba-9c12-d0f27c0a4604"
                 ),
-                ("sample#memory_total".into(), "184.68MB".into()),
-                ("sample#memory_rss".into(), "158.27MB".into())
+                ("sample#memory_total", "184.68MB"),
+                ("sample#memory_rss", "158.27MB")
             ]
         );
     }

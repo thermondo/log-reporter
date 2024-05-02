@@ -63,16 +63,16 @@ fn generate_boot_timeout_message(logline: &LogLine) -> Option<SentryMessage> {
 
 fn generate_request_timeout_message(
     logline: &LogLine,
-    items: &HashMap<String, String>,
+    items: &HashMap<&str, &str>,
 ) -> Option<SentryMessage> {
     let mut tags: HashMap<String, String> = HashMap::new();
 
-    let path = items.get("path")?.as_str();
+    let path = items.get("path")?;
 
     let full_url = Uri::builder()
         .scheme("https")
-        .authority(items.get("host")?.as_str())
-        .path_and_query(path)
+        .authority(*items.get("host")?)
+        .path_and_query(*path)
         .build()
         .ok()?;
 
@@ -82,11 +82,11 @@ fn generate_request_timeout_message(
     tags.insert("url".into(), full_url.to_string());
 
     if let Some(request_id) = items.get("request_id") {
-        tags.insert("request_id".into(), request_id.into());
+        tags.insert("request_id".into(), request_id.to_string());
     }
 
     if let Some(dyno) = items.get("dyno") {
-        tags.insert("server_name".into(), dyno.into());
+        tags.insert("server_name".into(), dyno.to_string());
     }
 
     Some(SentryMessage {
@@ -143,13 +143,10 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
 
             if config.sentry_report_metrics {
                 debug!("trying to report router metrics");
-                report_router_metrics(
-                    &sentry_client,
-                    pairs.iter().map(|(a, b)| (a.as_str(), b.as_str())),
-                );
+                report_router_metrics(&sentry_client, pairs.iter().copied());
             }
 
-            let map: HashMap<String, String> = HashMap::from_iter(pairs.into_iter());
+            let map: HashMap<&str, &str> = HashMap::from_iter(pairs.into_iter());
 
             debug!(?map, "got router log");
 
@@ -160,7 +157,7 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
                 continue;
             };
 
-            if at != "error" {
+            if *at != "error" {
                 continue;
             }
 
@@ -175,7 +172,7 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
                 sentry_client.add_metric(Metric::count(format!("errors.http.{code}")).finish());
             }
 
-            if code == "H12" {
+            if *code == "H12" {
                 if let Some(msg) = generate_request_timeout_message(&log, &map) {
                     send_to_sentry(sentry_client.clone(), msg);
                 }
@@ -192,10 +189,7 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
         } else if config.sentry_report_metrics {
             if let Ok((_remainder, pairs)) = parse_pairs() {
                 debug!("trying to report generic metrics");
-                report_metrics(
-                    &sentry_client,
-                    pairs.iter().map(|(a, b)| (a.as_str(), b.as_str())),
-                )
+                report_metrics(&sentry_client, pairs.iter().copied())
             }
         }
     }
@@ -294,13 +288,10 @@ mod tests {
                 text: "doesn't matter here".into(),
             },
             &HashMap::from_iter([
-                ("path".into(), "/path/".into()),
-                ("dyno".into(), "web.1".into()),
-                ("host".into(), "www.thermondo.de".into()),
-                (
-                    "request_id".into(),
-                    "8601b555-6a83-4c12-8269-97c8e32cdb22".into(),
-                ),
+                ("path", "/path/"),
+                ("dyno", "web.1"),
+                ("host", "www.thermondo.de"),
+                ("request_id", "8601b555-6a83-4c12-8269-97c8e32cdb22"),
             ]),
         )
         .unwrap();
@@ -335,10 +326,7 @@ mod tests {
                 kind: Kind::Heroku,
                 text: "doesn't matter here".into(),
             },
-            &HashMap::from_iter([
-                ("path".into(), "/path/1234/".into()),
-                ("host".into(), "www.thermondo.de".into()),
-            ]),
+            &HashMap::from_iter([("path", "/path/1234/"), ("host", "www.thermondo.de")]),
         )
         .unwrap();
         assert_eq!(

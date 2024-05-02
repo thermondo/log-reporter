@@ -58,6 +58,7 @@ impl PartialEq for SentryMetric<'_> {
                 (MetricValue::Gauge(lhs), MetricValue::Gauge(rhs)) => lhs == rhs,
                 _ => false,
             })
+            && self.tags == other.tags
     }
 }
 
