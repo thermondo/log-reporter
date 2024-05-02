@@ -192,12 +192,10 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
         } else if config.sentry_report_metrics {
             if let Ok((_remainder, pairs)) = parsed_key_value_pairs {
                 debug!("trying to report generic metrics");
-                if let Err(err) = report_metrics(
+                report_metrics(
                     &sentry_client,
                     pairs.iter().map(|(a, b)| (a.as_str(), b.as_str())),
-                ) {
-                    warn!(?err, ?pairs, "error reporting metrics");
-                }
+                )
             }
         }
     }
