@@ -129,7 +129,7 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
             .context("could not parse log line")?;
 
         let parse_pairs = || {
-            parse_key_value_pairs(&log.text)
+            parse_key_value_pairs(log.text)
                 .map_err(|err| err.to_owned())
                 .with_context(|| format!("could not parse key value pairs from {}", log.text))
                 .map(|(_, pairs)| pairs)
@@ -172,7 +172,7 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
                     send_to_sentry(sentry_client.clone(), msg);
                 }
             }
-        } else if let Ok((_, code)) = parse_dyno_error_code(&log.text) {
+        } else if let Ok((_, code)) = parse_dyno_error_code(log.text) {
             if config.sentry_report_metrics {
                 sentry_client.add_metric(Metric::count(format!("errors.runtime.{code}")).finish());
             }
