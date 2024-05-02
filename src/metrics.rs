@@ -116,10 +116,11 @@ fn split_metric_value_and_unit(value: &str) -> Result<(f64, MetricUnit)> {
 ///     value => 196.79MB
 /// is already prevously split into key and value,
 /// here we're combining both again into a SentryMetric with name, value, unit.
-fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> IResult<&'a str, SentryMetric<'a>> {
-    let (_, (metric_value, unit)) = complete(parse_metric_value_and_unit)(value)?;
+fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> Result<SentryMetric<'a>> {
+    let (_, (metric_value, unit)) =
+        complete(parse_metric_value_and_unit)(value).map_err(|err| err.to_owned())?;
 
-    map(
+    let (_, metric) = complete(map(
         tuple((
             alt((tag("sample"), tag("count"), tag("measure"))),
             char('#'),
@@ -136,7 +137,10 @@ fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> IResult<&'a str, Se
             unit: unit.clone(),
             ..Default::default()
         },
-    )(key)
+    ))(key)
+    .map_err(nom::Err::<nom::error::Error<&str>>::to_owned)?;
+
+    Ok(metric)
 }
 
 /// generate router metrics from key/value pairs.
@@ -240,7 +244,7 @@ fn generate_metrics<'a>(pairs: &'a LogMap) -> impl Iterator<Item = SentryMetric<
         .filter(|(key, _)| is_metric(key))
         .filter_map(move |(key, value)| {
             debug!(key, value, "got metric");
-            let (_, mut metric) = match parse_metric_from_kv(key, value) {
+            let mut metric = match parse_metric_from_kv(key, value) {
                 Ok(result) => result,
                 Err(err) => {
                     warn!(key, value, ?err, "couldn't parse metric");
@@ -287,10 +291,8 @@ mod tests {
         expected_value: MetricValue,
         expected_unit: MetricUnit,
     ) {
-        let (remainder, result) = parse_metric_from_kv(key, value).unwrap();
-        assert!(remainder.is_empty());
         assert_eq!(
-            result,
+            parse_metric_from_kv(key, value).unwrap(),
             SentryMetric {
                 name: expected_name,
                 value: expected_value,
