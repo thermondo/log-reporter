@@ -145,10 +145,6 @@ fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> Result<SentryMetric
 
 /// generate router metrics from key/value pairs.
 /// These don't come in the metric format, but are just generated metrics based on the router log.
-///
-/// The additional 'a and 'b lifetime bounds in the return value shouldn't be needed because I don't
-/// use anything from the input iterator, but the compiler still wants them:
-/// https://users.rust-lang.org/t/96813/2
 fn generate_router_metrics<'a>(pairs: &'a LogMap<'a>) -> Vec<SentryMetric<'static>> {
     let mut result = Vec::with_capacity(4);
 
