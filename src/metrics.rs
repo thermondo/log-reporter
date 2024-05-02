@@ -145,75 +145,75 @@ fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> IResult<&'a str, Se
 /// The additional 'a and 'b lifetime bounds in the return value shouldn't be needed because I don't
 /// use anything from the input iterator, but the compiler still wants them:
 /// https://users.rust-lang.org/t/96813/2
-fn generate_router_metrics<'a>(
-    pairs: &'a LogMap<'a>,
-) -> impl Iterator<Item = SentryMetric<'static>> + 'a {
-    pairs
-        .into_iter()
-        .filter_map(move |(&key, value)| match key {
-            "bytes" => {
-                if let Ok(value) = value.parse::<u32>() {
-                    Some(SentryMetric {
-                        name: "router.bytes",
-                        value: MetricValue::Distribution(value as f64),
-                        unit: MetricUnit::Information(InformationUnit::Byte),
-                        ..Default::default()
-                    })
-                } else {
-                    warn!(value, "could not parse router.bytes value");
-                    None
-                }
+fn generate_router_metrics<'a>(pairs: &'a LogMap<'a>) -> Vec<SentryMetric<'static>> {
+    let mut result = Vec::with_capacity(4);
+
+    if let Some(value) = pairs.get("bytes") {
+        if let Ok(value) = value.parse::<u32>() {
+            result.push(SentryMetric {
+                name: "router.bytes",
+                value: MetricValue::Distribution(value as f64),
+                unit: MetricUnit::Information(InformationUnit::Byte),
+                ..Default::default()
+            })
+        } else {
+            warn!(value, "could not parse router.bytes value");
+        }
+    }
+
+    if let Some(value) = pairs.get("connect") {
+        match split_metric_value_and_unit(value) {
+            Ok((metric_value, unit)) => result.push(SentryMetric {
+                name: "router.connect",
+                value: MetricValue::Distribution(metric_value),
+                unit,
+                ..Default::default()
+            }),
+            Err(err) => {
+                warn!(?err, value, "could not parse router.connect value");
             }
-            "connect" => match split_metric_value_and_unit(value) {
-                Ok((metric_value, unit)) => Some(SentryMetric {
-                    name: "router.connect",
-                    value: MetricValue::Distribution(metric_value),
-                    unit,
-                    ..Default::default()
-                }),
-                Err(err) => {
-                    warn!(?err, value, "could not parse router.connect value");
-                    None
-                }
-            },
-            "service" => match split_metric_value_and_unit(value) {
-                Ok((metric_value, unit)) => Some(SentryMetric {
-                    name: "router.service",
-                    value: MetricValue::Distribution(metric_value),
-                    unit,
-                    ..Default::default()
-                }),
-                Err(err) => {
-                    warn!(?err, value, "could not parse router.service value");
-                    None
-                }
-            },
-            "status" => {
-                if let Ok(status) = value.parse::<u16>() {
-                    Some(SentryMetric {
-                        name: match status {
-                            200..=299 => "router.status.2xx",
-                            300..=399 => "router.status.3xx",
-                            400..=499 => "router.status.4xx",
-                            500..=599 => "router.status.5xx",
-                            _ => "router.status.xxx",
-                        },
-                        value: MetricValue::Counter(1.0),
-                        unit: MetricUnit::None,
-                        ..Default::default()
-                    })
-                } else {
-                    warn!(value, "could not parse status value");
-                    None
-                }
+        }
+    }
+
+    if let Some(value) = pairs.get("service") {
+        match split_metric_value_and_unit(value) {
+            Ok((metric_value, unit)) => result.push(SentryMetric {
+                name: "router.service",
+                value: MetricValue::Distribution(metric_value),
+                unit,
+                ..Default::default()
+            }),
+            Err(err) => {
+                warn!(?err, value, "could not parse router.service value");
             }
-            _ => None,
-        })
+        }
+    }
+
+    if let Some(value) = pairs.get("status") {
+        if let Ok(status) = value.parse::<u16>() {
+            result.push(SentryMetric {
+                name: match status {
+                    200..=299 => "router.status.2xx",
+                    300..=399 => "router.status.3xx",
+                    400..=499 => "router.status.4xx",
+                    500..=599 => "router.status.5xx",
+                    _ => "router.status.xxx",
+                },
+                value: MetricValue::Counter(1.0),
+                unit: MetricUnit::None,
+                ..Default::default()
+            })
+        } else {
+            warn!(value, "could not parse status value");
+        }
+    }
+
+    result
 }
 
 /// report router metrics to the sentry client.
 /// These don't come in the metric format, but are just generated metrics based on the router log.
-pub(crate) fn report_router_metrics<'a, 'b>(client: &Client, pairs: &LogMap) {
+pub(crate) fn report_router_metrics(client: &Client, pairs: &LogMap) {
     for metric in generate_router_metrics(pairs) {
         client.add_metric(metric.into());
     }
@@ -319,7 +319,7 @@ mod tests {
     #[test_case("bytes")]
     fn test_router_metrics_skips_over_invalid_value(metric_name: &str) {
         let result: Vec<_> =
-            generate_router_metrics(&LogMap::from_iter([(metric_name, "invalid_value")])).collect();
+            generate_router_metrics(&LogMap::from_iter([(metric_name, "invalid_value")]));
         assert!(result.is_empty());
     }
 
@@ -338,8 +338,7 @@ mod tests {
             ("status", "200"),
             ("bytes", "15055"),
             ("protocol", "https"),
-        ]))
-        .collect();
+        ]));
         assert_eq!(
             result,
             vec![
@@ -387,8 +386,7 @@ mod tests {
             ("status", "503"),
             ("bytes", "0"),
             ("protocol", "https"),
-        ]))
-        .collect();
+        ]));
         assert_eq!(
             result,
             vec![
