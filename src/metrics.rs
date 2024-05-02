@@ -111,6 +111,71 @@ fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> IResult<&'a str, Se
     )(key)
 }
 
+/// generate router metrics from key/value pairs.
+/// These don't come in the metric format, but are just generated metrics based on the router log.
+fn generate_router_metrics<'a, 'b, I>(
+    key_value_pairs: I,
+) -> impl Iterator<Item = SentryMetric<'static>> + 'a + 'b
+where
+    I: Iterator<Item = (&'a str, &'b str)> + 'a + 'b,
+{
+    key_value_pairs.filter_map(|(key, value)| match key {
+        "bytes" => {
+            if let Ok(value) = value.parse::<u32>() {
+                Some(SentryMetric {
+                    name: "router.bytes",
+                    value: MetricValue::Distribution(value as f64),
+                    unit: MetricUnit::Information(InformationUnit::Byte),
+                })
+            } else {
+                warn!(value, "could not parse router.bytes value");
+                None
+            }
+        }
+        "connect" => match split_metric_value_and_unit(value) {
+            Ok((metric_value, unit)) => Some(SentryMetric {
+                name: "router.connect",
+                value: MetricValue::Distribution(metric_value),
+                unit,
+            }),
+            Err(err) => {
+                warn!(?err, value, "could not parse router.connect value");
+                None
+            }
+        },
+        "service" => match split_metric_value_and_unit(value) {
+            Ok((metric_value, unit)) => Some(SentryMetric {
+                name: "router.service",
+                value: MetricValue::Distribution(metric_value),
+                unit,
+            }),
+            Err(err) => {
+                warn!(?err, value, "could not parse router.service value");
+                None
+            }
+        },
+        "status" => {
+            if let Ok(status) = value.parse::<u16>() {
+                Some(SentryMetric {
+                    name: match status {
+                        200..=299 => "router.status.2xx",
+                        300..=399 => "router.status.3xx",
+                        400..=499 => "router.status.4xx",
+                        500..=599 => "router.status.5xx",
+                        _ => "router.status.xxx",
+                    },
+                    value: MetricValue::Counter(1.0),
+                    unit: MetricUnit::None,
+                })
+            } else {
+                warn!(value, "could not parse status value");
+                None
+            }
+        }
+        _ => None,
+    })
+}
+
 /// report router metrics to the sentry client.
 /// These don't come in the metric format, but are just generated metrics based on the router log.
 pub(crate) fn report_router_metrics<'a, 'b, I>(client: &Client, key_value_pairs: I) -> Result<()>
