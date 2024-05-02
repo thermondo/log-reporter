@@ -24,6 +24,14 @@ struct SentryMetric<'a> {
     unit: MetricUnit,
 }
 
+impl<'a> From<SentryMetric<'a>> for sentry::metrics::Metric {
+    fn from(metric: SentryMetric<'a>) -> Self {
+        Metric::build(metric.name.to_owned(), metric.value)
+            .with_unit(metric.unit)
+            .finish()
+    }
+}
+
 impl PartialEq for SentryMetric<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
@@ -113,6 +121,10 @@ fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> IResult<&'a str, Se
 
 /// generate router metrics from key/value pairs.
 /// These don't come in the metric format, but are just generated metrics based on the router log.
+///
+/// The additional 'a and 'b lifetime bounds in the return value shouldn't be needed because I don't
+/// use anything from the input iterator, but the compiler still wants them:
+/// https://users.rust-lang.org/t/96813/2
 fn generate_router_metrics<'a, 'b, I>(
     key_value_pairs: I,
 ) -> impl Iterator<Item = SentryMetric<'static>> + 'a + 'b
@@ -180,57 +192,13 @@ where
 
 /// report router metrics to the sentry client.
 /// These don't come in the metric format, but are just generated metrics based on the router log.
-pub(crate) fn report_router_metrics<'a, 'b, I>(client: &Client, key_value_pairs: I) -> Result<()>
+pub(crate) fn report_router_metrics<'a, 'b, I>(client: &Client, key_value_pairs: I)
 where
-    I: Iterator<Item = (&'a str, &'b str)>,
+    I: Iterator<Item = (&'a str, &'b str)> + 'a + 'b,
 {
-    for (key, value) in key_value_pairs {
-        match key {
-            "bytes" => {
-                let value: u32 = value.parse().context("can't parse bytes")?;
-                client.add_metric(
-                    Metric::distribution("router.bytes", value as f64)
-                        .with_unit(MetricUnit::Information(InformationUnit::Byte))
-                        .finish(),
-                );
-            }
-            "connect" => {
-                let (metric_value, unit) = split_metric_value_and_unit(value)?;
-                client.add_metric(
-                    Metric::distribution("router.connect", metric_value)
-                        .with_unit(unit)
-                        .finish(),
-                );
-            }
-            "service" => {
-                let (metric_value, unit) = split_metric_value_and_unit(value)?;
-                client.add_metric(
-                    Metric::distribution("router.service", metric_value)
-                        .with_unit(unit)
-                        .finish(),
-                );
-            }
-            "status" => {
-                let status: u16 = value.parse().context("can't parse status code")?;
-                client.add_metric(
-                    Metric::count(format!(
-                        "router.status.{}",
-                        match status {
-                            200..=299 => "2xx",
-                            300..=399 => "3xx",
-                            400..=499 => "4xx",
-                            500..=599 => "5xx",
-                            _ => "xxx",
-                        }
-                    ))
-                    .finish(),
-                );
-            }
-            _ => {}
-        }
+    for metric in generate_router_metrics(key_value_pairs) {
+        client.add_metric(metric.into());
     }
-
-    Ok(())
 }
 
 /// parse metrics from key-value pairs and report them to the sentry clients.

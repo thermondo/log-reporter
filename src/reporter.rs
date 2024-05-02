@@ -143,12 +143,10 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
 
             if config.sentry_report_metrics {
                 debug!("trying to report router metrics");
-                if let Err(err) = report_router_metrics(
+                report_router_metrics(
                     &sentry_client,
                     pairs.iter().map(|(a, b)| (a.as_str(), b.as_str())),
-                ) {
-                    warn!(?err, ?pairs, "error reporting router metrics");
-                }
+                );
             }
 
             let map: HashMap<String, String> = HashMap::from_iter(pairs.into_iter());
