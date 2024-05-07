@@ -65,7 +65,7 @@ jobs:
         run: docker compose build web
 
       - name: start webserver
-        run: docker compose up web --detach
+        run: docker compose up web --wait
 
       - name: test HTTP request
         run: |
