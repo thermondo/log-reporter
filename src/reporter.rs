@@ -1,10 +1,14 @@
-use crate::log_parser::{
-    parse_key_value_pairs, parse_log_line, parse_offer_extension_number, parse_offer_number,
-    parse_project_reference, parse_sfid, Kind, LogLine, LogMap,
+use crate::{
+    config::Config,
+    log_parser::{
+        parse_dyno_error_code, parse_key_value_pairs, parse_log_line, parse_offer_extension_number,
+        parse_offer_number, parse_project_reference, parse_sfid, Kind, LogLine, LogMap,
+    },
+    metrics::{report_metrics, report_router_metrics},
 };
 use anyhow::{Context as _, Result};
 use axum::http::uri::Uri;
-use sentry::{Client, Hub, Level, Scope};
+use sentry::{metrics::Metric, Client, Hub, Level, Scope};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
@@ -111,8 +115,8 @@ fn send_to_sentry(sentry_client: Arc<Client>, message: SentryMessage) {
     info!(?uuid, last_event_id = ?hub.last_event_id(), "captured message");
 }
 
-#[instrument(fields(dsn=?sentry_client.dsn()), skip(sentry_client))]
-pub(crate) fn process_logs(sentry_client: Arc<Client>, input: &str) -> Result<()> {
+#[instrument(fields(dsn=?sentry_client.dsn()), skip(sentry_client, config))]
+pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &str) -> Result<()> {
     for line in input.lines() {
         debug!("handling log line: {}", line);
 
@@ -120,19 +124,24 @@ pub(crate) fn process_logs(sentry_client: Arc<Client>, input: &str) -> Result<()
         if line.is_empty() {
             continue;
         }
-
         let (_, log) = parse_log_line(line)
             .map_err(|err| err.to_owned())
             .context("could not parse log line")?;
 
-        if !matches!(log.kind, Kind::Heroku) {
-            continue;
-        }
-
-        if log.source == "router" {
-            let (_, map) = parse_key_value_pairs(log.text)
+        let parse_pairs = || {
+            parse_key_value_pairs(log.text)
                 .map_err(|err| err.to_owned())
-                .with_context(|| format!("could not parse key value pairs from {}", log.text))?;
+                .with_context(|| format!("could not parse key value pairs from {}", log.text))
+                .map(|(_, pairs)| pairs)
+        };
+
+        if matches!(log.kind, Kind::Heroku) && log.source == "router" {
+            let map = parse_pairs()?;
+
+            if config.sentry_report_metrics {
+                debug!("trying to report router metrics");
+                report_router_metrics(&sentry_client, &map);
+            }
 
             debug!(?map, "got router log");
 
@@ -154,14 +163,28 @@ pub(crate) fn process_logs(sentry_client: Arc<Client>, input: &str) -> Result<()
                 continue;
             };
 
+            if config.sentry_report_metrics {
+                sentry_client.add_metric(Metric::count(format!("errors.http.{code}")).finish());
+            }
+
             if *code == "H12" {
                 if let Some(msg) = generate_request_timeout_message(&log, &map) {
                     send_to_sentry(sentry_client.clone(), msg);
                 }
             }
-        } else if log.text.starts_with("Error R10 (Boot timeout) ") {
-            if let Some(msg) = generate_boot_timeout_message(&log) {
-                send_to_sentry(sentry_client.clone(), msg);
+        } else if let Ok((_, code)) = parse_dyno_error_code(log.text) {
+            if config.sentry_report_metrics {
+                sentry_client.add_metric(Metric::count(format!("errors.runtime.{code}")).finish());
+            }
+            if code == "R10" {
+                if let Some(msg) = generate_boot_timeout_message(&log) {
+                    send_to_sentry(sentry_client.clone(), msg);
+                }
+            }
+        } else if config.sentry_report_metrics {
+            if let Ok(pairs) = parse_pairs() {
+                debug!("trying to report generic metrics");
+                report_metrics(&sentry_client, &pairs);
             }
         }
     }
@@ -189,8 +212,8 @@ mod tests {
             ";
 
         let events =
-            config.with_captured_sentry_events_sync("logplex_token", |sentry_client, _config| {
-                process_logs(sentry_client, input).expect("error processing logs");
+            config.with_captured_sentry_events_sync("logplex_token", |sentry_client, config| {
+                process_logs(&config, sentry_client, input).expect("error processing logs");
             });
 
         assert_eq!(events.len(), 1);
@@ -217,8 +240,8 @@ mod tests {
             ";
 
         let events =
-            config.with_captured_sentry_events_sync("logplex_token", |sentry_client, _config| {
-                process_logs(sentry_client, input).expect("error processing logs");
+            config.with_captured_sentry_events_sync("logplex_token", |sentry_client, config| {
+                process_logs(&config, sentry_client, input).expect("error processing logs");
             });
 
         assert_eq!(events.len(), 1);
