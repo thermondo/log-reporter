@@ -64,7 +64,7 @@ pub(crate) async fn handle_logs(
     {
         let sentry_client = sentry_client.clone();
         let config = config.clone();
-        let task_wait_ticket = config.waitgroup.clone();
+        let task_wait_ticket = config.new_waitgroup_ticket();
         rayon::spawn(move || {
             let body_text = match std::str::from_utf8(&body).context("invalid UTF-8 in body") {
                 Ok(body) => body,
@@ -95,7 +95,6 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use crossbeam_utils::sync::WaitGroup;
     use tower::ServiceExt;
 
     #[tokio::test]
@@ -199,8 +198,7 @@ mod tests {
     #[tokio::test]
     async fn test_end_to_end_with_shutdown() {
         let _ = initialize_tracing();
-        let wg = WaitGroup::new();
-        let config = Config::default().with_waitgroup(wg.clone());
+        let config = Config::default();
 
         let input = "
             111 <158>1 2022-12-05T08:59:21.850424+00:00 host heroku router - \
@@ -212,6 +210,7 @@ mod tests {
             ";
 
         let test_sentry_transport = config
+            .clone()
             .with_captured_sentry_transport_async("real_token", |_, config| async move {
                 let app = build_app(config.clone());
                 let response = app
@@ -233,7 +232,7 @@ mod tests {
             .await;
 
         // wait for async tasks to finish
-        wg.wait();
+        config.shutdown();
 
         let events: Vec<sentry::protocol::Event<'static>> = test_sentry_transport
             .fetch_and_clear_envelopes()

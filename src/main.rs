@@ -1,6 +1,5 @@
 use crate::server::build_app;
 use anyhow::Result;
-use crossbeam_utils::sync::WaitGroup;
 use std::{
     borrow::Cow,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -23,8 +22,7 @@ mod test_utils;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    let waitgroup = WaitGroup::new();
-    let config = Arc::new(config::Config::init_from_env()?.with_waitgroup(waitgroup.clone()));
+    let config = Arc::new(config::Config::init_from_env()?);
     info!(?config, "config loaded");
 
     let heroku_release = std::env::var("HEROKU_RELEASE_VERSION").ok();
@@ -74,13 +72,7 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
-    info!(?waitgroup, "waiting for pending tasks");
-    waitgroup.wait();
-
-    // explicitly shut down the sentry clients to flush events
-    for client in config.sentry_clients.values() {
-        client.close(None);
-    }
+    config.shutdown();
 
     Ok(())
 }

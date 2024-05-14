@@ -1,7 +1,12 @@
 use anyhow::Result;
 use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
-use std::{borrow::Cow, collections::HashMap, env, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    env,
+    sync::{Arc, RwLock},
+};
 use tracing::{debug, error, info, instrument};
 
 #[cfg(test)]
@@ -18,7 +23,7 @@ pub(crate) struct Config {
     /// clone this waitgroup for anything that the app needs to wait
     /// for when shutting down.
     /// See also [`WaitGroup`](crossbeam_utils::sync::WaitGroup).
-    pub waitgroup: Option<WaitGroup>,
+    waitgroup: Arc<RwLock<Option<WaitGroup>>>,
 }
 
 impl Default for Config {
@@ -29,16 +34,37 @@ impl Default for Config {
             sentry_debug: false,
             sentry_report_metrics: false,
             sentry_clients: HashMap::new(),
-            waitgroup: None,
+            waitgroup: Arc::new(RwLock::new(Some(WaitGroup::new()))),
             sentry_traces_sample_rate: 0.0,
         }
     }
 }
 
 impl Config {
-    pub(crate) fn with_waitgroup(mut self, waitgroup: WaitGroup) -> Config {
-        self.waitgroup = Some(waitgroup);
-        self
+    /// do the shutdown work for the config or server.
+    ///
+    /// will
+    /// - wait for all running waitgroup tickets
+    /// - shut down sentry clients
+    pub(crate) fn shutdown(&self) {
+        info!(?self.waitgroup, "waiting for pending tasks");
+
+        if let Some(waitgroup) = self.waitgroup.write().unwrap().take() {
+            waitgroup.wait();
+        }
+
+        info!("flushing sentry events");
+        for client in self.sentry_clients.values() {
+            client.close(None);
+        }
+    }
+
+    /// Create a new "waitgroup ticket"
+    ///
+    /// Each background job / task that want to finish on shutdown
+    /// should keep one.
+    pub(crate) fn new_waitgroup_ticket(&self) -> Option<WaitGroup> {
+        self.waitgroup.read().unwrap().clone()
     }
 
     #[instrument]
