@@ -64,7 +64,7 @@ pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {
 ///     Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch
 ///
 /// see https://devcenter.heroku.com/articles/error-codes#r10-boot-timeout
-pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, &str> {
+pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, (&str, &str)> {
     map(
         tuple((
             preceded(multispace0, tag("Error")),
@@ -75,7 +75,7 @@ pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, &str> {
             ),
             opt(tuple((space1, tag("->"), rest))),
         )),
-        |(_tag, code, _name, _arrow)| code,
+        |(_tag, code, name, _arrow)| (code, name),
     )(input)
 }
 
@@ -427,19 +427,29 @@ mod tests {
         );
     }
 
-    #[test_case("R10", "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch")]
+    #[test_case("R10", "Boot timeout", "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch")]
     #[test_case(
         "R12",
+        "Exit timeout",
         "Error R12 (Exit timeout) -> Process failed to exit within 30 seconds of SIGTERM"
     )]
-    #[test_case("R13", "Error R13 (Attach error) -> Failed to attach to process")]
-    #[test_case("R14", "Error R14 (Memory quota exceeded)")]
-    #[test_case("R15", "Error R15 (Memory quota vastly exceeded)")]
-    #[test_case("R16", "Error R16 (Detached) -> An attached process is not responding to SIGHUP after its external connection was closed.")]
-    #[test_case("R17", "Error R17 (Checksum error) -> Checksum does match expected value. Expected: SHA256:ed5718e83475c780145609cbb2e4f77ec8076f6f59ebc8a916fb790fbdb1ae64 Actual: SHA256:9ca15af16e06625dfd123ebc3472afb0c5091645512b31ac3dd355f0d8cc42c1")]
-    fn test_extract_dyno_error(expected_code: &str, line: &str) {
-        let (remainder, result) = parse_dyno_error_code(line).expect("parse error");
+    #[test_case(
+        "R13",
+        "Attach error",
+        "Error R13 (Attach error) -> Failed to attach to process"
+    )]
+    #[test_case("R14", "Memory quota exceeded", "Error R14 (Memory quota exceeded)")]
+    #[test_case(
+        "R15",
+        "Memory quota vastly exceeded",
+        "Error R15 (Memory quota vastly exceeded)"
+    )]
+    #[test_case("R16", "Detached", "Error R16 (Detached) -> An attached process is not responding to SIGHUP after its external connection was closed.")]
+    #[test_case("R17", "Checksum error", "Error R17 (Checksum error) -> Checksum does match expected value. Expected: SHA256:ed5718e83475c780145609cbb2e4f77ec8076f6f59ebc8a916fb790fbdb1ae64 Actual: SHA256:9ca15af16e06625dfd123ebc3472afb0c5091645512b31ac3dd355f0d8cc42c1")]
+    fn test_extract_dyno_error(expected_code: &str, expected_name: &str, line: &str) {
+        let (remainder, (code, name)) = parse_dyno_error_code(line).expect("parse error");
         assert!(remainder.is_empty(), "rest: {}", remainder);
-        assert_eq!(result, expected_code);
+        assert_eq!(code, expected_code);
+        assert_eq!(name, expected_name);
     }
 }
