@@ -274,6 +274,13 @@ mod tests {
         MetricUnit::Information(InformationUnit::MebiByte)
     )]
     #[test_case(
+        "sample#memory-dash",
+        "196.79MB",
+        "memory-dash",
+        MetricValue::Gauge(196.79),
+        MetricUnit::Information(InformationUnit::MebiByte)
+    )]
+    #[test_case(
         "count#webhook.message.created.accepted",
         "1",
         "webhook.message.created.accepted",
