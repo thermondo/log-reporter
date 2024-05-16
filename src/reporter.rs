@@ -52,12 +52,15 @@ fn route_from_path(path: &str) -> String {
     elements.join("/")
 }
 
-fn generate_boot_timeout_message(logline: &LogLine) -> Option<SentryMessage> {
+fn generate_dyno_error_message(code: &str, name: &str, logline: &LogLine) -> Option<SentryMessage> {
     let server_name = logline.source;
     Some(SentryMessage {
         tags: HashMap::from_iter(vec![("server_name".into(), server_name.into())]),
-        fingerprint: vec!["heroku-dyno-boot-timeout".into(), server_name.into()],
-        message: format!("boot timeout on {}\n{}", server_name, logline.text),
+        fingerprint: vec![
+            format!("heroku-dyno-error-{}", code.to_lowercase()),
+            server_name.into(),
+        ],
+        message: format!("{} ({}) on {}\n{}", name, code, server_name, logline.text),
     })
 }
 
@@ -172,14 +175,12 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
                     send_to_sentry(sentry_client.clone(), msg);
                 }
             }
-        } else if let Ok((_, code)) = parse_dyno_error_code(log.text) {
+        } else if let Ok((_, (code, name))) = parse_dyno_error_code(log.text) {
             if config.sentry_report_metrics {
                 sentry_client.add_metric(Metric::count(format!("errors.runtime.{code}")).finish());
             }
-            if code == "R10" {
-                if let Some(msg) = generate_boot_timeout_message(&log) {
-                    send_to_sentry(sentry_client.clone(), msg);
-                }
+            if let Some(msg) = generate_dyno_error_message(code, name, &log) {
+                send_to_sentry(sentry_client.clone(), msg);
             }
         } else if config.sentry_report_metrics {
             if let Ok(pairs) = parse_pairs() {
@@ -247,7 +248,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(
             events[0].message.as_ref().unwrap(),
-            "boot timeout on web.1\n\
+            "Boot timeout (R10) on web.1\n\
             Error R10 (Boot timeout) -> \
             Web process failed to bind to $PORT within 60 seconds of launch"
         );
@@ -255,7 +256,9 @@ mod tests {
 
     #[test]
     fn test_generate_boot_timeout_message() {
-        let msg = generate_boot_timeout_message(
+        let msg = generate_dyno_error_message(
+            "R10",
+            "Boot timeout",
             &LogLine {
                 timestamp: "2022-12-05T08:59:21.850424+00:00".parse().unwrap(),
                 source: "web.1",
@@ -264,9 +267,9 @@ mod tests {
             }).unwrap();
         assert_eq!(
             msg.message,
-            "boot timeout on web.1\nError R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch",
+            "Boot timeout (R10) on web.1\nError R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch",
         );
-        assert_eq!(msg.fingerprint, vec!["heroku-dyno-boot-timeout", "web.1"]);
+        assert_eq!(msg.fingerprint, vec!["heroku-dyno-error-r10", "web.1"]);
         assert_eq!(
             msg.tags,
             HashMap::from_iter([("server_name".into(), "web.1".into()),])
