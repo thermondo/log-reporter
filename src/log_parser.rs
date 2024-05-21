@@ -85,7 +85,7 @@ pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, LogMap> {
             delimited(
                 space0,
                 tuple((
-                    take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '#'),
+                    take_while1(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '#'),
                     tag("="),
                     alt((
                         delimited(tag("\""), take_till1(|c: char| c == '"'), tag("\"")),
@@ -404,6 +404,18 @@ mod tests {
 
         let (remainder, result) = parse_key_value_pairs(input).expect("parse error");
         assert_eq!(result, LogMap::from_iter([("key", "value")]));
+        assert_eq!(remainder, "and some text");
+    }
+
+    #[test]
+    fn test_key_value_with_dashes_and_some_remainder() {
+        let input: &str = "sample#some-key=some-value and some text";
+
+        let (remainder, result) = parse_key_value_pairs(input).expect("parse error");
+        assert_eq!(
+            result,
+            LogMap::from_iter([("sample#some-key", "some-value")])
+        );
         assert_eq!(remainder, "and some text");
     }
 
