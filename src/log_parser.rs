@@ -1,3 +1,4 @@
+use anyhow::Result;
 use chrono::{DateTime, FixedOffset};
 use nom::{
     branch::alt,
@@ -77,6 +78,28 @@ pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, (&str, &str)> 
         )),
         |(_tag, code, name, _arrow)| (code, name),
     )(input)
+}
+
+pub(crate) fn parse_key_value_pairs_json(input: &str) -> Result<LogMap> {
+    let result = LogMap::new();
+
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(input) {
+        if let Some(map) = value.as_object() {
+            for (key, value) in map {
+                result.insert(key, value.as_str());
+                result.extend(
+                    parse_key_value_pairs(log.text)
+                        .map_err(|err| err.to_owned())
+                        .with_context(|| {
+                            format!("could not parse key value pairs from {}", log.text)
+                        })
+                        .map(|(_, pairs)| pairs),
+                )
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, LogMap> {
@@ -323,6 +346,34 @@ mod tests {
                 source: "dramatiqworker.2",
                 text: "",
             }
+        );
+    }
+
+    #[test]
+    fn test_json_log_line() {
+        let input = serde_json::json!({
+            "event": "source=database_bronze sample#follower-lag-bytes=0",
+            "task_id": "f4502634-e145-4981-8c10-3e589dc59f46",
+            "task_name": "common.tasks.report_database_metrics",
+            "timestamp": "2024-05-22T06:22:26.150487Z",
+            "level": "info",
+            "logger": "celery.redirected",
+            "release": "r11027",
+            "commit": "a6cd8cfc",
+            "pid": 520,
+            "thread_id": 520
+        })
+        .to_string();
+
+        let (remainder, result) = parse_key_value_pairs(&input).expect("parse error");
+        // assert!(remainder.is_empty());
+
+        assert_eq!(
+            result,
+            LogMap::from_iter([
+                ("source", "database_bronze"),
+                ("sample#follower-lag-bytes", "0",),
+            ])
         );
     }
 

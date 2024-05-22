@@ -656,6 +656,7 @@ dependencies = [
  "sentry-panic",
  "sentry-tower",
  "sentry-tracing",
+ "serde_json",
  "test-case",
  "tokio",
  "tower",
