@@ -81,20 +81,19 @@ pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, (&str, &str)> 
 }
 
 pub(crate) fn parse_key_value_pairs_json(input: &str) -> Result<LogMap> {
-    let result = LogMap::new();
+    let mut result = LogMap::new();
 
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(input) {
         if let Some(map) = value.as_object() {
             for (key, value) in map {
-                result.insert(key, value.as_str());
-                result.extend(
-                    parse_key_value_pairs(log.text)
-                        .map_err(|err| err.to_owned())
-                        .with_context(|| {
-                            format!("could not parse key value pairs from {}", log.text)
-                        })
-                        .map(|(_, pairs)| pairs),
-                )
+                if let Some(value) = value.as_str() {
+                    result.insert(key, value);
+                    result.extend(
+                        parse_key_value_pairs(value)
+                            .map_err(|err| err.to_owned())
+                            .map(|(_, pairs)| pairs.iter())?,
+                    )
+                }
             }
         }
     }
