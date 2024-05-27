@@ -83,7 +83,7 @@ pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, (&str, &str)> 
 pub(crate) fn parse_key_value_pairs_json(input: &str) -> Result<LogMap> {
     let mut result = LogMap::new();
 
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(input) {
+    if let Ok(value) = serde_json_borrow::from_str::<serde_json_borrow::Value>(input) {
         if let Some(map) = value.as_object() {
             for (key, value) in map {
                 if let Some(value) = value.as_str() {
