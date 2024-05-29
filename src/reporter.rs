@@ -2,9 +2,12 @@ use crate::{
     config::Config,
     log_parser::{
         parse_dyno_error_code, parse_key_value_pairs, parse_log_line, parse_offer_extension_number,
-        parse_offer_number, parse_project_reference, parse_sfid, Kind, LogLine, LogMap,
+        parse_offer_number, parse_project_reference, parse_scaling_event, parse_sfid, Kind,
+        LogLine, LogMap,
     },
-    metrics::{report_metrics, report_router_metrics},
+    metrics::{
+        generate_metrics, generate_router_metrics, generate_scaling_metrics, report_metrics,
+    },
 };
 use anyhow::{Context as _, Result};
 use axum::http::uri::Uri;
@@ -143,7 +146,7 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
 
             if config.sentry_report_metrics {
                 debug!("trying to report router metrics");
-                report_router_metrics(&sentry_client, &map);
+                report_metrics(&sentry_client, generate_router_metrics(&map));
             }
 
             debug!(?map, "got router log");
@@ -182,10 +185,18 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
             if let Some(msg) = generate_dyno_error_message(code, name, &log) {
                 send_to_sentry(sentry_client.clone(), msg);
             }
+        } else if matches!(log.kind, Kind::App)
+            && log.source == "api"
+            && config.sentry_report_metrics
+        {
+            if let Ok((_, (events, user))) = parse_scaling_event(log.text) {
+                debug!("trying to report scaling metrics");
+                report_metrics(&sentry_client, generate_scaling_metrics(&events, user));
+            }
         } else if config.sentry_report_metrics {
             if let Ok(pairs) = parse_pairs() {
                 debug!("trying to report generic metrics");
-                report_metrics(&sentry_client, &pairs);
+                report_metrics(&sentry_client, generate_metrics(&pairs));
             }
         }
     }
