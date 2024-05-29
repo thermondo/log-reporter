@@ -15,12 +15,12 @@ use sentry::{
 use std::{borrow::Cow, collections::HashMap};
 use tracing::{debug, warn};
 
-use crate::log_parser::LogMap;
+use crate::log_parser::{LogMap, ScalingEvent};
 
 const PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
 
 #[derive(Debug)]
-struct SentryMetric<'a> {
+pub(crate) struct SentryMetric<'a> {
     name: &'a str,
     value: MetricValue,
     unit: MetricUnit,
@@ -143,9 +143,28 @@ fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> Result<SentryMetric
     Ok(metric)
 }
 
+/// generate metrics from scaling events
+pub(crate) fn generate_scaling_metrics<'a>(
+    events: &[ScalingEvent<'a>],
+    user: &'a str,
+) -> Vec<SentryMetric<'a>> {
+    let mut result = Vec::with_capacity(events.len());
+
+    for event in events {
+        result.push(SentryMetric {
+            name: "dyno_count",
+            value: MetricValue::Gauge(event.count as f64),
+            tags: HashMap::from_iter([("proc", event.proc), ("user", user), ("size", event.size)]),
+            ..Default::default()
+        })
+    }
+
+    result
+}
+
 /// generate router metrics from key/value pairs.
 /// These don't come in the metric format, but are just generated metrics based on the router log.
-fn generate_router_metrics<'a>(pairs: &'a LogMap<'a>) -> Vec<SentryMetric<'static>> {
+pub(crate) fn generate_router_metrics<'a>(pairs: &'a LogMap<'a>) -> Vec<SentryMetric<'static>> {
     let mut result = Vec::with_capacity(4);
 
     if let Some(value) = pairs.get("bytes") {
@@ -211,14 +230,6 @@ fn generate_router_metrics<'a>(pairs: &'a LogMap<'a>) -> Vec<SentryMetric<'stati
     result
 }
 
-/// report router metrics to the sentry client.
-/// These don't come in the metric format, but are just generated metrics based on the router log.
-pub(crate) fn report_router_metrics(client: &Client, pairs: &LogMap) {
-    for metric in generate_router_metrics(pairs) {
-        client.add_metric(metric.into());
-    }
-}
-
 /// generate metrics from key-value pairs
 /// Should understand:
 /// - native log-based metrics: https://devcenter.heroku.com/articles/librato#native-log-based-metrics
@@ -228,7 +239,7 @@ pub(crate) fn report_router_metrics(client: &Client, pairs: &LogMap) {
 /// into tags.
 ///
 /// We don't support annotations yet.
-fn generate_metrics<'a>(pairs: &'a LogMap) -> impl Iterator<Item = SentryMetric<'a>> {
+pub(crate) fn generate_metrics<'a>(pairs: &'a LogMap) -> impl Iterator<Item = SentryMetric<'a>> {
     let tags: HashMap<&str, &str> = pairs
         .iter()
         .filter(|(key, _)| !is_metric(key))
@@ -254,8 +265,11 @@ fn generate_metrics<'a>(pairs: &'a LogMap) -> impl Iterator<Item = SentryMetric<
         })
 }
 
-pub(crate) fn report_metrics(client: &Client, pairs: &LogMap) {
-    for metric in generate_metrics(pairs) {
+pub(crate) fn report_metrics<'a>(
+    client: &Client,
+    metrics: impl IntoIterator<Item = SentryMetric<'a>>,
+) {
+    for metric in metrics {
         debug!(?metric, "sending metric");
         client.add_metric(metric.into());
     }
@@ -420,6 +434,34 @@ mod tests {
                     ..Default::default()
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn test_generate_scaling_metrics() {
+        let result = generate_scaling_metrics(
+            &vec![ScalingEvent {
+                proc: "web",
+                count: 99,
+                size: "huuuuge",
+            }],
+            "some-user@thermondo.de",
+        );
+
+        let wanted_tags = HashMap::from_iter([
+            ("proc", "web"),
+            ("user", "some-user@thermondo.de"),
+            ("size", "huuuuge"),
+        ]);
+
+        assert_eq!(
+            result,
+            vec![SentryMetric {
+                name: "dyno_count",
+                value: MetricValue::Gauge(99.0),
+                unit: MetricUnit::None,
+                tags: wanted_tags.clone(),
+            },]
         );
     }
 

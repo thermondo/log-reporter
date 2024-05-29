@@ -2,7 +2,7 @@ use chrono::{DateTime, FixedOffset};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till1, take_while1, take_while_m_n},
-    character::complete::{char, digit1, multispace0, space0, space1},
+    character::complete::{char, digit1, multispace0, multispace1, space0, space1, u16},
     combinator::{all_consuming, map, map_res, opt, recognize, rest, value, verify},
     multi::many1,
     sequence::{delimited, preceded, tuple},
@@ -56,6 +56,44 @@ pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {
             kind,
             text,
         },
+    )(input)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScalingEvent<'a> {
+    pub(crate) proc: &'a str,
+    pub(crate) count: u16,
+    pub(crate) size: &'a str,
+}
+
+/// parses heroku scaling events
+/// format like:
+///     Scaled to web@4:Standard-1X worker@3:Standard-2X by user heroku.hirefire.api@thermondo.de
+pub(crate) fn parse_scaling_event(input: &str) -> IResult<&str, (Vec<ScalingEvent>, &str)> {
+    map(
+        tuple((
+            preceded(multispace0, tag("Scaled to")),
+            many1(preceded(multispace1, parse_single_scaling_event)),
+            preceded(multispace1, tag("by user")),
+            preceded(multispace1, rest),
+        )),
+        |(_, events, _, user)| (events, user),
+    )(input)
+}
+
+/// parses single scaling element
+/// format like:
+///     web@4:Standard-1X
+fn parse_single_scaling_event(input: &str) -> IResult<&str, ScalingEvent> {
+    map(
+        tuple((
+            take_till1(|c: char| c == '@'),
+            tag("@"),
+            u16,
+            tag(":"),
+            take_till1(|c: char| c.is_whitespace()),
+        )),
+        |(proc, _, count, _, size)| ScalingEvent { proc, count, size },
     )(input)
 }
 
@@ -310,6 +348,25 @@ mod tests {
     }
 
     #[test]
+    fn test_scaling_event_full_line() {
+        let input = "
+            124 <133>1 2024-05-29T07:07:25.193493+00:00 host app api - \
+            Scaled to web@4:Standard-1X by user heroku.hirefire.api@thermondo.de";
+        let (remainder, result) = parse_log_line(input).expect("parse error");
+        assert!(remainder.is_empty());
+        assert_eq!(
+            result,
+            LogLine {
+                timestamp: DateTime::parse_from_rfc3339("2024-05-29T07:07:25.193493+00:00")
+                    .unwrap(),
+                kind: Kind::App,
+                source: "api",
+                text: "Scaled to web@4:Standard-1X by user heroku.hirefire.api@thermondo.de",
+            }
+        );
+    }
+
+    #[test]
     fn test_parse_empty_line() {
         let input: &str = "69 <190>1 2022-12-05T20:26:20.860136+00:00 host app dramatiqworker.2 -";
         let (remainder, result) = parse_log_line(input).expect("parse error");
@@ -463,5 +520,42 @@ mod tests {
         assert!(remainder.is_empty(), "rest: {}", remainder);
         assert_eq!(code, expected_code);
         assert_eq!(name, expected_name);
+    }
+
+    #[test_case(
+        vec![ScalingEvent {proc: "web", count: 4, size: "Standard-1X"}],
+        "heroku.hirefire.api@thermondo.de",
+        "Scaled to web@4:Standard-1X by user heroku.hirefire.api@thermondo.de"
+    )]
+    #[test_case(
+        vec![
+            ScalingEvent {proc: "celerybeat", count: 1, size: "Standard-1X"},
+            ScalingEvent {proc: "celeryworkerhighmemory", count: 1, size: "Performance-M"},
+            ScalingEvent {proc: "celeryworkerhighprio", count: 3, size: "Standard-2X"},
+            ScalingEvent {proc: "celeryworkerlowprio", count: 1, size: "Performance-M"},
+            ScalingEvent {proc: "celeryworkeroffergenerator", count: 1, size: "Performance-L"},
+            ScalingEvent {proc: "release", count: 0, size: "Standard-2X"},
+            ScalingEvent {proc: "web", count: 5, size: "Performance-M"},
+        ],
+        "heroku.hirefire.api@thermondo.de",
+        "Scaled to \
+            celerybeat@1:Standard-1X \
+            celeryworkerhighmemory@1:Performance-M \
+            celeryworkerhighprio@3:Standard-2X \
+            celeryworkerlowprio@1:Performance-M \
+            celeryworkeroffergenerator@1:Performance-L \
+            release@0:Standard-2X \
+            web@5:Performance-M \
+            by user heroku.hirefire.api@thermondo.de"
+    )]
+    fn test_extract_scaling_events(
+        expected_events: Vec<ScalingEvent>,
+        expected_user: &str,
+        line: &str,
+    ) {
+        let (remainder, (events, user)) = parse_scaling_event(line).expect("parse error");
+        assert!(remainder.is_empty(), "rest: {}", remainder);
+        assert_eq!(user, expected_user);
+        assert_eq!(events, expected_events);
     }
 }
