@@ -164,7 +164,12 @@ pub(crate) fn generate_scaling_metrics<'a>(
 
 /// generate router metrics from key/value pairs.
 /// These don't come in the metric format, but are just generated metrics based on the router log.
-pub(crate) fn generate_router_metrics<'a>(pairs: &'a LogMap<'a>) -> Vec<SentryMetric<'static>> {
+pub(crate) fn generate_router_metrics<'a>(pairs: &'a LogMap<'a>) -> Vec<SentryMetric<'a>> {
+    let tags: HashMap<&str, &str> = ["at", "method", "dyno", "protocol", "code"]
+        .into_iter()
+        .filter_map(|tagname| pairs.get(tagname).map(|tag| (tagname, *tag)))
+        .collect();
+
     let mut result = Vec::with_capacity(4);
 
     if let Some(value) = pairs.get("bytes") {
@@ -225,6 +230,10 @@ pub(crate) fn generate_router_metrics<'a>(pairs: &'a LogMap<'a>) -> Vec<SentryMe
         } else {
             warn!(value, "could not parse status value");
         }
+    }
+
+    for m in result.iter_mut() {
+        m.tags.clone_from(&tags);
     }
 
     result
@@ -337,14 +346,14 @@ mod tests {
     #[test_case("status")]
     #[test_case("bytes")]
     fn test_router_metrics_skips_over_invalid_value(metric_name: &str) {
-        let result: Vec<_> =
-            generate_router_metrics(&LogMap::from_iter([(metric_name, "invalid_value")]));
+        let lm = LogMap::from_iter([(metric_name, "invalid_value")]);
+        let result: Vec<_> = generate_router_metrics(&lm);
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_generate_router_metrics_normal() {
-        let result: Vec<_> = generate_router_metrics(&LogMap::from_iter([
+        let lm = LogMap::from_iter([
             ("at", "info"),
             ("method", "GET"),
             ("path", "/api/disposition/service/?hub=33"),
@@ -357,7 +366,14 @@ mod tests {
             ("status", "200"),
             ("bytes", "15055"),
             ("protocol", "https"),
-        ]));
+        ]);
+        let result: Vec<_> = generate_router_metrics(&lm);
+        let expected_tags: HashMap<&str, &str> = HashMap::from_iter([
+            ("at", "info"),
+            ("method", "GET"),
+            ("dyno", "web.10"),
+            ("protocol", "https"),
+        ]);
         assert_eq!(
             result,
             vec![
@@ -365,24 +381,28 @@ mod tests {
                     name: "router.bytes",
                     value: MetricValue::Distribution(15055.0),
                     unit: MetricUnit::Information(InformationUnit::Byte),
+                    tags: expected_tags.clone(),
                     ..Default::default()
                 },
                 SentryMetric {
                     name: "router.connect",
                     value: MetricValue::Distribution(2.0),
                     unit: MetricUnit::Duration(DurationUnit::MilliSecond),
+                    tags: expected_tags.clone(),
                     ..Default::default()
                 },
                 SentryMetric {
                     name: "router.service",
                     value: MetricValue::Distribution(864.0),
                     unit: MetricUnit::Duration(DurationUnit::MilliSecond),
+                    tags: expected_tags.clone(),
                     ..Default::default()
                 },
                 SentryMetric {
                     name: "router.status.2xx",
                     value: MetricValue::Counter(1.0),
                     unit: MetricUnit::None,
+                    tags: expected_tags.clone(),
                     ..Default::default()
                 },
             ]
@@ -390,7 +410,7 @@ mod tests {
     }
     #[test]
     fn test_generate_router_metrics_timeout() {
-        let result: Vec<_> = generate_router_metrics(&LogMap::from_iter([
+        let lm = LogMap::from_iter([
             ("at", "error"),
             ("code", "H12"),
             ("desc", "Request timeout"),
@@ -405,7 +425,15 @@ mod tests {
             ("status", "503"),
             ("bytes", "0"),
             ("protocol", "https"),
-        ]));
+        ]);
+        let result: Vec<_> = generate_router_metrics(&lm);
+        let expected_tags: HashMap<&str, &str> = HashMap::from_iter([
+            ("at", "error"),
+            ("code", "H12"),
+            ("method", "GET"),
+            ("dyno", "web.1"),
+            ("protocol", "https"),
+        ]);
         assert_eq!(
             result,
             vec![
@@ -413,24 +441,28 @@ mod tests {
                     name: "router.bytes",
                     value: MetricValue::Distribution(0.0),
                     unit: MetricUnit::Information(InformationUnit::Byte),
+                    tags: expected_tags.clone(),
                     ..Default::default()
                 },
                 SentryMetric {
                     name: "router.connect",
                     value: MetricValue::Distribution(0.0),
                     unit: MetricUnit::Duration(DurationUnit::MilliSecond),
+                    tags: expected_tags.clone(),
                     ..Default::default()
                 },
                 SentryMetric {
                     name: "router.service",
                     value: MetricValue::Distribution(30000.0),
                     unit: MetricUnit::Duration(DurationUnit::MilliSecond),
+                    tags: expected_tags.clone(),
                     ..Default::default()
                 },
                 SentryMetric {
                     name: "router.status.5xx",
                     value: MetricValue::Counter(1.0),
                     unit: MetricUnit::None,
+                    tags: expected_tags.clone(),
                     ..Default::default()
                 },
             ]
