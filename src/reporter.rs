@@ -6,7 +6,8 @@ use crate::{
         LogLine, LogMap,
     },
     metrics::{
-        generate_metrics, generate_router_metrics, generate_scaling_metrics, report_metrics,
+        generate_metrics, generate_router_metrics, generate_scaling_metrics, proc_from_source,
+        report_metrics,
     },
 };
 use anyhow::{Context as _, Result};
@@ -180,7 +181,12 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
             }
         } else if let Ok((_, (code, name))) = parse_dyno_error_code(log.text) {
             if config.sentry_report_metrics {
-                sentry_client.add_metric(Metric::count(format!("errors.runtime.{code}")).finish());
+                sentry_client.add_metric(
+                    Metric::count(format!("errors.runtime.{code}"))
+                        .with_tag("source", log.source.to_owned())
+                        .with_tag("proc", proc_from_source(log.source).to_owned())
+                        .finish(),
+                );
             }
             if let Some(msg) = generate_dyno_error_message(code, name, &log) {
                 send_to_sentry(sentry_client.clone(), msg);
