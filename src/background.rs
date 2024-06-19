@@ -16,7 +16,7 @@ use tracing::debug;
 /// due to how tokio works this spawned task won't block the server shutdown.
 pub(crate) async fn resend_scaling_events(config: Arc<Config>) {
     loop {
-        sleep(Duration::from_secs(30)).await;
+        sleep(Duration::from_secs(10)).await;
 
         for (_, destination) in config.destinations.iter() {
             let last_scaling_events = destination.last_scaling_events.lock().unwrap();
