@@ -16,7 +16,19 @@ use std::future::Future;
 #[derive(Debug)]
 pub(crate) struct Destination {
     pub(crate) sentry_client: Arc<sentry::Client>,
+
+    /// store the last seen scaling events so we can re-send them,
+    /// assuming that the dyno counts don't change between scaling events.
     pub(crate) last_scaling_events: Mutex<Option<Vec<OwnedScalingEvent>>>,
+}
+
+impl Destination {
+    pub(crate) fn new(sentry_client: Arc<sentry::Client>) -> Self {
+        Self {
+            sentry_client,
+            last_scaling_events: Mutex::new(None),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -115,10 +127,7 @@ impl Config {
                 if client.is_enabled() {
                     config.destinations.insert(
                         logplex_token.to_owned(),
-                        Arc::new(Destination {
-                            sentry_client: Arc::new(client),
-                            last_scaling_events: Mutex::new(None),
-                        }),
+                        Arc::new(Destination::new(Arc::new(client))),
                     );
 
                     info!(
@@ -179,10 +188,7 @@ impl Config {
                 ..Default::default()
             },
         )));
-        let dest = Arc::new(Destination {
-            sentry_client: client.clone(),
-            last_scaling_events: Mutex::new(None),
-        });
+        let dest = Arc::new(Destination::new(client.clone()));
         self.destinations
             .insert(logplex_token.to_owned(), dest.clone());
 
