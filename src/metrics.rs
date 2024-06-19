@@ -19,6 +19,15 @@ use crate::log_parser::{LogMap, ScalingEvent};
 
 const PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
 
+/// return a proc identifier (like `web`) from a source / dyno identifier (like `web.12`)
+pub(crate) fn proc_from_source(source: &str) -> &str {
+    if let Some((proc, _)) = source.split_once('.') {
+        proc
+    } else {
+        source
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct SentryMetric<'a> {
     name: &'a str,
@@ -258,9 +267,7 @@ pub(crate) fn generate_metrics<'a>(pairs: &'a LogMap) -> impl Iterator<Item = Se
     // in case of custom metrics, the `source` tag is a dyno identifier like `web.1`
     // We extract the proc type (`web`) from it if possible for easier filtering.
     if let Some(source) = tags.get("source") {
-        if let Some((proc, _)) = source.split_once('.') {
-            tags.insert("proc", proc);
-        }
+        tags.insert("proc", proc_from_source(source));
     }
 
     pairs
