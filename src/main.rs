@@ -11,6 +11,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
+mod background;
 mod config;
 mod extractors;
 mod log_parser;
@@ -55,6 +56,9 @@ async fn main() -> Result<()> {
         tracing_registry.init();
         None
     };
+
+    info!("starting background task: resend scaling events");
+    tokio::spawn(background::resend_scaling_events(config.clone()));
 
     let port = config.port;
     let app = build_app(config.clone()).layer(

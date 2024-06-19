@@ -66,6 +66,16 @@ pub(crate) struct ScalingEvent<'a> {
     pub(crate) size: &'a str,
 }
 
+impl<'a> From<&'a OwnedScalingEvent> for ScalingEvent<'a> {
+    fn from(value: &'a OwnedScalingEvent) -> Self {
+        Self {
+            proc: &value.proc,
+            count: value.count,
+            size: &value.size,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct OwnedScalingEvent {
     pub(crate) proc: String,
