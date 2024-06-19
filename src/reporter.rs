@@ -1,58 +1,25 @@
 use crate::{
     config::Config,
     log_parser::{
-        parse_dyno_error_code, parse_key_value_pairs, parse_log_line, parse_offer_extension_number,
-        parse_offer_number, parse_project_reference, parse_scaling_event, parse_sfid, Kind,
-        LogLine, LogMap,
+        full_uri_from_router_log_line, parse_dyno_error_code, parse_key_value_pairs,
+        parse_log_line, parse_scaling_event, Kind, LogLine, LogMap,
     },
     metrics::{
         generate_metrics, generate_router_metrics, generate_scaling_metrics, report_metrics,
     },
+    utils::route_from_path,
 };
 use anyhow::{Context as _, Result};
-use axum::http::uri::Uri;
 use sentry::{metrics::Metric, Client, Hub, Level, Scope};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
-use uuid::Uuid;
 
 #[derive(Debug)]
 struct SentryMessage {
     tags: HashMap<String, String>,
     fingerprint: Vec<String>,
     message: String,
-}
-
-/// generate a route-name from a URL path.
-/// Replaces elements in the URL that are
-/// - positive integers
-/// - UUIDs
-/// - Salesforce IDs
-/// - thermondo project references
-/// - thermondo offer & offer-extension numbers
-fn route_from_path(path: &str) -> String {
-    let elements: Vec<_> = path
-        .split('/')
-        .map(|el| {
-            if el.parse::<u64>().is_ok() {
-                "{number}"
-            } else if Uuid::try_parse(el).is_ok() {
-                "{uuid}"
-            } else if parse_sfid(el).is_ok() {
-                "{sfid}"
-            } else if parse_project_reference(el).is_ok() {
-                "{project_reference}"
-            } else if parse_offer_number(el).is_ok() {
-                "{offer_number}"
-            } else if parse_offer_extension_number(el).is_ok() {
-                "{offer_extension_number}"
-            } else {
-                el
-            }
-        })
-        .collect();
-    elements.join("/")
 }
 
 fn generate_dyno_error_message(code: &str, name: &str, logline: &LogLine) -> Option<SentryMessage> {
@@ -70,15 +37,7 @@ fn generate_dyno_error_message(code: &str, name: &str, logline: &LogLine) -> Opt
 fn generate_request_timeout_message(logline: &LogLine, items: &LogMap) -> Option<SentryMessage> {
     let mut tags: HashMap<String, String> = HashMap::new();
 
-    let path = items.get("path")?;
-
-    let full_url = Uri::builder()
-        .scheme("https")
-        .authority(*items.get("host")?)
-        .path_and_query(*path)
-        .build()
-        .ok()?;
-
+    let full_url = full_uri_from_router_log_line(&items)?;
     let route_name = route_from_path(full_url.path());
 
     tags.insert("transaction".into(), route_name.clone());

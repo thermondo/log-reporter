@@ -1,3 +1,4 @@
+use axum::http::uri::Uri;
 use chrono::{DateTime, FixedOffset};
 use nom::{
     branch::alt,
@@ -26,6 +27,18 @@ pub(crate) struct LogLine<'a> {
 }
 
 pub(crate) type LogMap<'a> = BTreeMap<&'a str, &'a str>;
+
+/// generate a full URI for a router log line.
+///
+/// Needed when reporting timeouts or router metrics
+pub(crate) fn full_uri_from_router_log_line<'a>(pairs: &'a LogMap<'a>) -> Option<Uri> {
+    Uri::builder()
+        .scheme("https")
+        .authority(*pairs.get("host")?)
+        .path_and_query(*pairs.get("path")?)
+        .build()
+        .ok()
+}
 
 #[instrument]
 pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {

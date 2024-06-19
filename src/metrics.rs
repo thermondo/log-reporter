@@ -15,7 +15,10 @@ use sentry::{
 use std::{borrow::Cow, collections::HashMap};
 use tracing::{debug, warn};
 
-use crate::log_parser::{LogMap, ScalingEvent};
+use crate::{
+    log_parser::{full_uri_from_router_log_line, LogMap, ScalingEvent},
+    utils::route_from_path,
+};
 
 const PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
 
@@ -169,6 +172,12 @@ pub(crate) fn generate_router_metrics<'a>(pairs: &'a LogMap<'a>) -> Vec<SentryMe
         .into_iter()
         .filter_map(|tagname| pairs.get(tagname).map(|tag| (tagname, *tag)))
         .collect();
+
+    if let Some(route_name) =
+        full_uri_from_router_log_line(&pairs).map(|full_uri| route_from_path(full_uri.path()))
+    {
+        tags.insert("transaction", route_name.to_owned());
+    }
 
     let mut result = Vec::with_capacity(4);
 

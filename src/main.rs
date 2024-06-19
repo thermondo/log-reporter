@@ -19,6 +19,7 @@ mod reporter;
 mod server;
 #[cfg(test)]
 mod test_utils;
+mod utils;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
