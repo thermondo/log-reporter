@@ -6,7 +6,8 @@ use crate::{
         LogLine, LogMap,
     },
     metrics::{
-        generate_metrics, generate_router_metrics, generate_scaling_metrics, report_metrics,
+        generate_metrics, generate_router_metrics, generate_scaling_metrics, proc_from_source,
+        report_metrics,
     },
 };
 use anyhow::{Context as _, Result};
@@ -53,14 +54,6 @@ fn route_from_path(path: &str) -> String {
         })
         .collect();
     elements.join("/")
-}
-
-fn proc_from_source(source: &str) -> &str {
-    if let Some((proc, _)) = source.split_once('.') {
-        proc
-    } else {
-        source
-    }
 }
 
 fn generate_dyno_error_message(code: &str, name: &str, logline: &LogLine) -> Option<SentryMessage> {

@@ -19,6 +19,15 @@ use crate::log_parser::{LogMap, ScalingEvent};
 
 const PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
 
+/// return a proc identifier (like `web`) from a source / dyno identifier (like `web.12`)
+pub(crate) fn proc_from_source(source: &str) -> &str {
+    if let Some((proc, _)) = source.split_once('.') {
+        proc
+    } else {
+        source
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct SentryMetric<'a> {
     name: &'a str,
