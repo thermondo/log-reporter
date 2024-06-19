@@ -29,6 +29,59 @@ impl Destination {
             last_scaling_events: Mutex::new(None),
         }
     }
+
+    pub(crate) fn update_scaling_event_from_seen_sources<'a>(
+        &self,
+        sources: impl IntoIterator<Item = &'a str>,
+    ) {
+        let mut seen_counts: HashMap<&str, u16> = HashMap::new();
+        for source in sources {
+            if let Some((proc, new)) = source.split_once('.') {
+                let Ok(new) = new.parse::<u16>() else {
+                    continue;
+                };
+
+                if let Some(seen) = seen_counts.get_mut(proc) {
+                    if new > *seen {
+                        *seen = new;
+                    }
+                } else {
+                    seen_counts.insert(proc, new);
+                }
+            }
+        }
+
+        let mut last_scaling_events = self.last_scaling_events.lock().unwrap();
+
+        if let Some(ref mut last_scaling_events) = *last_scaling_events {
+            for evt in last_scaling_events.iter_mut() {
+                if let Some(seen_count) = seen_counts.remove(&evt.proc[..]) {
+                    if seen_count > evt.count {
+                        evt.count = seen_count;
+                    }
+                }
+            }
+
+            for (proc, count) in seen_counts {
+                last_scaling_events.push(OwnedScalingEvent {
+                    proc: proc.to_owned(),
+                    count,
+                    size: "".into(),
+                });
+            }
+        } else {
+            *last_scaling_events = Some(
+                seen_counts
+                    .iter()
+                    .map(|(&proc, count)| OwnedScalingEvent {
+                        proc: proc.to_owned(),
+                        count: *count,
+                        size: "".into(),
+                    })
+                    .collect(),
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -13,7 +13,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use axum::http::uri::Uri;
 use sentry::{metrics::Metric, Client, Hub, Level, Scope};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
@@ -128,6 +128,8 @@ pub(crate) fn process_logs(
     destination: Arc<Destination>,
     input: &str,
 ) -> Result<()> {
+    let mut seen_sources: HashSet<&str> = HashSet::new();
+
     for line in input.lines() {
         debug!("handling log line: {}", line);
 
@@ -145,6 +147,8 @@ pub(crate) fn process_logs(
                 .with_context(|| format!("could not parse key value pairs from {}", log.text))
                 .map(|(_, pairs)| pairs)
         };
+
+        seen_sources.insert(log.source);
 
         if matches!(log.kind, Kind::Heroku) && log.source == "router" {
             let map = parse_pairs()?;
