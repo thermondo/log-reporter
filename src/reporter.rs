@@ -55,6 +55,14 @@ fn route_from_path(path: &str) -> String {
     elements.join("/")
 }
 
+fn proc_from_source(source: &str) -> &str {
+    if let Some((proc, _)) = source.split_once('.') {
+        proc
+    } else {
+        source
+    }
+}
+
 fn generate_dyno_error_message(code: &str, name: &str, logline: &LogLine) -> Option<SentryMessage> {
     let server_name = logline.source;
     Some(SentryMessage {
@@ -180,7 +188,12 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
             }
         } else if let Ok((_, (code, name))) = parse_dyno_error_code(log.text) {
             if config.sentry_report_metrics {
-                sentry_client.add_metric(Metric::count(format!("errors.runtime.{code}")).finish());
+                sentry_client.add_metric(
+                    Metric::count(format!("errors.runtime.{code}"))
+                        .with_tag("source", log.source.to_owned())
+                        .with_tag("proc", proc_from_source(log.source).to_owned())
+                        .finish(),
+                );
             }
             if let Some(msg) = generate_dyno_error_message(code, name, &log) {
                 send_to_sentry(sentry_client.clone(), msg);
