@@ -27,7 +27,7 @@ pub(crate) async fn resend_scaling_events(config: Arc<Config>) {
                 debug!("resending scaling metrics");
 
                 report_metrics(
-                    &destination,
+                    destination,
                     generate_scaling_metrics(&events, "thermondo_log_reporter"),
                 );
             }
