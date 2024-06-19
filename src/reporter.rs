@@ -199,6 +199,13 @@ pub(crate) fn process_logs(
         {
             if let Ok((_, (events, user))) = parse_scaling_event(log.text) {
                 debug!("trying to report scaling metrics");
+
+                {
+                    // store the scaling events in a cache so we can regularly re-send them.
+                    let mut last_events = destination.last_scaling_events.lock().unwrap();
+                    *last_events = Some(events.iter().map(Into::into).collect());
+                }
+
                 report_metrics(&destination, generate_scaling_metrics(&events, user));
             }
         } else if config.sentry_report_metrics {

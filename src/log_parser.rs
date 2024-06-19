@@ -66,6 +66,23 @@ pub(crate) struct ScalingEvent<'a> {
     pub(crate) size: &'a str,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct OwnedScalingEvent {
+    pub(crate) proc: String,
+    pub(crate) count: u16,
+    pub(crate) size: String,
+}
+
+impl<'a> From<&ScalingEvent<'a>> for OwnedScalingEvent {
+    fn from(value: &ScalingEvent<'a>) -> Self {
+        Self {
+            proc: value.proc.into(),
+            count: value.count,
+            size: value.size.into(),
+        }
+    }
+}
+
 /// parses heroku scaling events
 /// format like:
 ///     Scaled to web@4:Standard-1X worker@3:Standard-2X by user heroku.hirefire.api@thermondo.de

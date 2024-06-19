@@ -1,3 +1,4 @@
+use crate::log_parser::OwnedScalingEvent;
 use anyhow::Result;
 use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
@@ -5,16 +6,17 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     env,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 use tracing::{debug, error, info, instrument};
 
 #[cfg(test)]
 use std::future::Future;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct Destination {
     pub(crate) sentry_client: Arc<sentry::Client>,
+    pub(crate) last_scaling_events: Mutex<Option<Vec<OwnedScalingEvent>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +117,7 @@ impl Config {
                         logplex_token.to_owned(),
                         Arc::new(Destination {
                             sentry_client: Arc::new(client),
+                            last_scaling_events: Mutex::new(None),
                         }),
                     );
 
@@ -178,6 +181,7 @@ impl Config {
         )));
         let dest = Arc::new(Destination {
             sentry_client: client.clone(),
+            last_scaling_events: Mutex::new(None),
         });
         self.destinations
             .insert(logplex_token.to_owned(), dest.clone());
