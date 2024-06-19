@@ -8,14 +8,14 @@ use nom::{
     sequence::tuple,
     IResult,
 };
-use sentry::{
-    metrics::{DurationUnit, InformationUnit, Metric, MetricUnit, MetricValue},
-    Client,
-};
+use sentry::metrics::{DurationUnit, InformationUnit, Metric, MetricUnit, MetricValue};
 use std::{borrow::Cow, collections::HashMap};
 use tracing::{debug, warn};
 
-use crate::log_parser::{LogMap, ScalingEvent};
+use crate::{
+    config::Destination,
+    log_parser::{LogMap, ScalingEvent},
+};
 
 const PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
 
@@ -290,12 +290,12 @@ pub(crate) fn generate_metrics<'a>(pairs: &'a LogMap) -> impl Iterator<Item = Se
 }
 
 pub(crate) fn report_metrics<'a>(
-    client: &Client,
+    destination: &Destination,
     metrics: impl IntoIterator<Item = SentryMetric<'a>>,
 ) {
     for metric in metrics {
         debug!(?metric, "sending metric");
-        client.add_metric(metric.into());
+        destination.sentry_client.add_metric(metric.into());
     }
 }
 

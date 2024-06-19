@@ -34,8 +34,8 @@ pub(crate) async fn handle_logs(
     State(config): State<Arc<Config>>,
     body: Body,
 ) -> impl IntoResponse {
-    let sentry_client = match config.sentry_clients.get(logplex_token.as_str()) {
-        Some(client) => client,
+    let destination = match config.destinations.get(logplex_token.as_str()) {
+        Some(dest) => dest,
         None => {
             debug!(?logplex_token, "unknown logplex token");
             return StatusCode::BAD_REQUEST;
@@ -62,7 +62,7 @@ pub(crate) async fn handle_logs(
     // By using a [`WaitGroup`](crossbeam_utils::sync::WaitGroup),
     // we can wait for any task that holds a cloned instance of it.
     {
-        let sentry_client = sentry_client.clone();
+        let destination = destination.clone();
         let config = config.clone();
         let task_wait_ticket = config.new_waitgroup_ticket();
         rayon::spawn(move || {
@@ -74,7 +74,7 @@ pub(crate) async fn handle_logs(
                 }
             };
 
-            if let Err(err) = process_logs(&config, sentry_client, body_text) {
+            if let Err(err) = process_logs(&config, destination, body_text) {
                 warn!("error processing logs: {:?}", err);
             }
             // we actually don't need the `drop` here,
