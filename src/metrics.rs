@@ -19,6 +19,15 @@ use crate::{
 
 const PAGES: MetricUnit = MetricUnit::Custom(Cow::Borrowed("pages"));
 
+/// return a proc identifier (like `web`) from a source / dyno identifier (like `web.12`)
+pub(crate) fn proc_from_source(source: &str) -> &str {
+    if let Some((proc, _)) = source.split_once('.') {
+        proc
+    } else {
+        source
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct SentryMetric<'a> {
     name: &'a str,
@@ -249,11 +258,17 @@ pub(crate) fn generate_router_metrics<'a>(pairs: &'a LogMap<'a>) -> Vec<SentryMe
 ///
 /// We don't support annotations yet.
 pub(crate) fn generate_metrics<'a>(pairs: &'a LogMap) -> impl Iterator<Item = SentryMetric<'a>> {
-    let tags: HashMap<&str, &str> = pairs
+    let mut tags: HashMap<&str, &str> = pairs
         .iter()
         .filter(|(key, _)| !is_metric(key))
         .map(|(key, value)| (*key, *value))
         .collect();
+
+    // in case of custom metrics, the `source` tag is a dyno identifier like `web.1`
+    // We extract the proc type (`web`) from it if possible for easier filtering.
+    if let Some(source) = tags.get("source") {
+        tags.insert("proc", proc_from_source(source));
+    }
 
     pairs
         .iter()
@@ -517,6 +532,7 @@ mod tests {
 
         let wanted_tags = HashMap::from_iter([
             ("source", "dramatiqworker.1"),
+            ("proc", "dramatiqworker"),
             (
                 "dyno",
                 "heroku.145151706.54c51996-a1c6-4491-8f76-b39b19374517",
