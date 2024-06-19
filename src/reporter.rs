@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, Destination},
     log_parser::{
         parse_dyno_error_code, parse_key_value_pairs, parse_log_line, parse_offer_extension_number,
         parse_offer_number, parse_project_reference, parse_scaling_event, parse_sfid, Kind,
@@ -121,8 +121,12 @@ fn send_to_sentry(sentry_client: Arc<Client>, message: SentryMessage) {
     info!(?uuid, last_event_id = ?hub.last_event_id(), "captured message");
 }
 
-#[instrument(fields(dsn=?sentry_client.dsn()), skip(sentry_client, config))]
-pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &str) -> Result<()> {
+#[instrument(fields(dsn=?destination.sentry_client.dsn()), skip(destination, config))]
+pub(crate) fn process_logs(
+    config: &Config,
+    destination: Arc<Destination>,
+    input: &str,
+) -> Result<()> {
     for line in input.lines() {
         debug!("handling log line: {}", line);
 
@@ -146,7 +150,7 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
 
             if config.sentry_report_metrics {
                 debug!("trying to report router metrics");
-                report_metrics(&sentry_client, generate_router_metrics(&map));
+                report_metrics(&destination, generate_router_metrics(&map));
             }
 
             debug!(?map, "got router log");
@@ -170,20 +174,24 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
             };
 
             if config.sentry_report_metrics {
-                sentry_client.add_metric(Metric::count(format!("errors.http.{code}")).finish());
+                destination
+                    .sentry_client
+                    .add_metric(Metric::count(format!("errors.http.{code}")).finish());
             }
 
             if *code == "H12" {
                 if let Some(msg) = generate_request_timeout_message(&log, &map) {
-                    send_to_sentry(sentry_client.clone(), msg);
+                    send_to_sentry(destination.sentry_client.clone(), msg);
                 }
             }
         } else if let Ok((_, (code, name))) = parse_dyno_error_code(log.text) {
             if config.sentry_report_metrics {
-                sentry_client.add_metric(Metric::count(format!("errors.runtime.{code}")).finish());
+                destination
+                    .sentry_client
+                    .add_metric(Metric::count(format!("errors.runtime.{code}")).finish());
             }
             if let Some(msg) = generate_dyno_error_message(code, name, &log) {
-                send_to_sentry(sentry_client.clone(), msg);
+                send_to_sentry(destination.sentry_client.clone(), msg);
             }
         } else if matches!(log.kind, Kind::App)
             && log.source == "api"
@@ -191,12 +199,12 @@ pub(crate) fn process_logs(config: &Config, sentry_client: Arc<Client>, input: &
         {
             if let Ok((_, (events, user))) = parse_scaling_event(log.text) {
                 debug!("trying to report scaling metrics");
-                report_metrics(&sentry_client, generate_scaling_metrics(&events, user));
+                report_metrics(&destination, generate_scaling_metrics(&events, user));
             }
         } else if config.sentry_report_metrics {
             if let Ok(pairs) = parse_pairs() {
                 debug!("trying to report generic metrics");
-                report_metrics(&sentry_client, generate_metrics(&pairs));
+                report_metrics(&destination, generate_metrics(&pairs));
             }
         }
     }

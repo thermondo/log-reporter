@@ -13,13 +13,18 @@ use tracing::{debug, error, info, instrument};
 use std::future::Future;
 
 #[derive(Debug, Clone)]
+pub(crate) struct Destination {
+    pub(crate) sentry_client: Arc<sentry::Client>,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct Config {
     pub port: u16,
     pub sentry_dsn: Option<String>,
     pub sentry_debug: bool,
     pub sentry_report_metrics: bool,
     pub sentry_traces_sample_rate: f32,
-    pub sentry_clients: HashMap<String, Arc<sentry::Client>>,
+    pub destinations: HashMap<String, Arc<Destination>>,
     /// clone this waitgroup for anything that the app needs to wait
     /// for when shutting down.
     /// See also [`WaitGroup`](crossbeam_utils::sync::WaitGroup).
@@ -33,7 +38,7 @@ impl Default for Config {
             sentry_dsn: None,
             sentry_debug: false,
             sentry_report_metrics: false,
-            sentry_clients: HashMap::new(),
+            destinations: HashMap::new(),
             waitgroup: Arc::new(RwLock::new(Some(WaitGroup::new()))),
             sentry_traces_sample_rate: 0.0,
         }
@@ -54,8 +59,8 @@ impl Config {
         }
 
         info!("flushing sentry events");
-        for client in self.sentry_clients.values() {
-            client.close(None);
+        for destination in self.destinations.values() {
+            destination.sentry_client.close(None);
         }
     }
 
@@ -106,9 +111,12 @@ impl Config {
                     },
                 ));
                 if client.is_enabled() {
-                    config
-                        .sentry_clients
-                        .insert(logplex_token.to_owned(), Arc::new(client));
+                    config.destinations.insert(
+                        logplex_token.to_owned(),
+                        Arc::new(Destination {
+                            sentry_client: Arc::new(client),
+                        }),
+                    );
 
                     info!(
                         ?logplex_token,
@@ -136,7 +144,7 @@ impl Config {
     pub(crate) async fn with_captured_sentry_events_async<F>(
         self,
         logplex_token: &str,
-        f: impl FnOnce(Arc<sentry::Client>, Arc<Config>) -> F,
+        f: impl FnOnce(Arc<Destination>, Arc<Config>) -> F,
     ) -> Vec<sentry::protocol::Event<'static>>
     where
         F: Future<Output = ()>,
@@ -155,7 +163,7 @@ impl Config {
     pub(crate) async fn with_captured_sentry_transport_async<F>(
         mut self,
         logplex_token: &str,
-        f: impl FnOnce(Arc<sentry::Client>, Arc<Config>) -> F,
+        f: impl FnOnce(Arc<Destination>, Arc<Config>) -> F,
     ) -> Arc<Arc<sentry::test::TestTransport>>
     where
         F: Future<Output = ()>,
@@ -168,12 +176,15 @@ impl Config {
                 ..Default::default()
             },
         )));
-        self.sentry_clients
-            .insert(logplex_token.to_owned(), client.clone());
+        let dest = Arc::new(Destination {
+            sentry_client: client.clone(),
+        });
+        self.destinations
+            .insert(logplex_token.to_owned(), dest.clone());
 
-        f(client, Arc::new(self.clone())).await;
+        f(dest, Arc::new(self.clone())).await;
 
-        self.sentry_clients.remove(&logplex_token.to_owned());
+        self.destinations.remove(&logplex_token.to_owned());
         test_transport
     }
 
@@ -181,17 +192,16 @@ impl Config {
     pub(crate) fn with_captured_sentry_events_sync(
         self,
         logplex_token: &str,
-        f: impl FnOnce(Arc<sentry::Client>, Arc<Config>),
+        f: impl FnOnce(Arc<Destination>, Arc<Config>),
     ) -> Vec<sentry::protocol::Event<'static>> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("can't build runtime");
 
         runtime.block_on(async move {
-            self.with_captured_sentry_events_async(
-                logplex_token,
-                |cl, cfg| async move { f(cl, cfg) },
-            )
+            self.with_captured_sentry_events_async(logplex_token, |dest, cfg| async move {
+                f(dest, cfg)
+            })
             .await
         })
     }
