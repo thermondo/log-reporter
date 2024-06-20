@@ -36,17 +36,17 @@ impl Destination {
     ) {
         let mut seen_counts: HashMap<&str, u16> = HashMap::new();
         for source in sources {
-            if let Some((proc, new)) = source.split_once('.') {
-                let Ok(new) = new.parse::<u16>() else {
+            if let Some((proc, num)) = source.split_once('.') {
+                let Ok(num) = num.parse::<u16>() else {
                     continue;
                 };
 
                 if let Some(seen) = seen_counts.get_mut(proc) {
-                    if new > *seen {
-                        *seen = new;
+                    if num > *seen {
+                        *seen = num;
                     }
                 } else {
-                    seen_counts.insert(proc, new);
+                    seen_counts.insert(proc, num);
                 }
             }
         }
