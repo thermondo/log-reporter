@@ -95,7 +95,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use tower::ServiceExt;
+    use tower::util::ServiceExt;
 
     #[tokio::test]
     async fn test_health_check() {
