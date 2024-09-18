@@ -1,37 +1,47 @@
-FROM lukemathwalker/cargo-chef:latest-rust-slim-bullseye AS chef
+FROM rust:bookworm AS builder
+WORKDIR /app
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt update && \
-    apt install -y \
-        pkg-config \
-        libssl-dev \
-        ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
 
-WORKDIR app
+# not pinning apt package versions yet
+# hadolint ignore=DL3008
+RUN apt-get update && \
+apt-get install --no-install-recommends --yes \
+    pkg-config \
+    libssl-dev \
+    ca-certificates && \
+rm -rf /var/lib/apt/lists/* 
 
-FROM chef AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
+# explanations for various mounts:
+#
+# * type=bind,target=.,rw: mounts the host's build context (the repository root) into our build
+#   container with read/write privileges. WRITES WILL BE DISCARDED.
+# * type=cache,target=...,sharing=private: tells docker to cache files between builds. not only does
+#   this cache our dependencies, but also allows rust to do incremental builds rather than compiling
+#   everything from scratch every time. sharing=private makes sure concurrent docker builds won't
+#   step on each others' toes.
+#
+RUN --mount=type=bind,target=.,rw \
+    --mount=type=cache,target=./target,sharing=private \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=private \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=private \
+    cargo build --release --bin log_reporter && \
+    # move build artifact elsewhere because all our writes to this directory will be discarded \
+    mv target/release/log_reporter /
 
-FROM chef AS builder 
-COPY --from=planner /app/recipe.json recipe.json
-# Build dependencies - this is the caching Docker layer!
-RUN cargo chef cook --release --recipe-path recipe.json
-# Build application
-COPY . .
-RUN cargo build --release --bin log_reporter
-
-# We do not need the Rust toolchain to run the binary!
-FROM debian:bullseye-slim AS runtime
+FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt update && \
-    apt install -y \
+
+# not pinning apt package versions yet:
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install --no-install-recommends --yes \
         libssl-dev \
         ca-certificates && \
+    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR app
-COPY --from=builder /app/target/release/log_reporter /usr/local/bin
+COPY --from=builder /log_reporter /usr/local/bin/
 ENTRYPOINT ["/usr/local/bin/log_reporter"]
