@@ -1,37 +1,34 @@
-FROM lukemathwalker/cargo-chef:latest-rust-slim-bullseye AS chef
+FROM rust:bookworm AS builder
+WORKDIR /app
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt update && \
-    apt install -y \
-        pkg-config \
-        libssl-dev \
-        ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
 
-WORKDIR app
+# not pinning apt package versions yet
+# hadolint ignore=DL3008
+RUN apt-get update && \
+apt-get install --no-install-recommends --yes \
+    pkg-config \
+    libssl-dev \
+    ca-certificates && \
+rm -rf /var/lib/apt/lists/* 
 
-FROM chef AS planner
 COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
 
-FROM chef AS builder 
-COPY --from=planner /app/recipe.json recipe.json
-# Build dependencies - this is the caching Docker layer!
-RUN cargo chef cook --release --recipe-path recipe.json
-# Build application
-COPY . .
-RUN cargo build --release --bin log_reporter
+RUN cargo build --release --bin log_reporter 
 
-# We do not need the Rust toolchain to run the binary!
-FROM debian:bullseye-slim AS runtime
+FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt update && \
-    apt install -y \
+
+# not pinning apt package versions yet:
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install --no-install-recommends --yes \
         libssl-dev \
         ca-certificates && \
+    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR app
-COPY --from=builder /app/target/release/log_reporter /usr/local/bin
+COPY --from=builder /app/target/release/log_reporter /usr/local/bin/
 ENTRYPOINT ["/usr/local/bin/log_reporter"]
