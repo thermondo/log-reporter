@@ -59,6 +59,10 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    env:
+      # Heroku doesn't support docker buildkit, so we have to ensure
+      # that the build works without it.
+      DOCKER_BUILDKIT: 0
     steps:
       - uses: actions/checkout@v4
       - name: build docker image via docker-compose
