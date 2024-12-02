@@ -36,7 +36,7 @@ pub(crate) struct SentryMetric<'a> {
     tags: HashMap<&'a str, &'a str>,
 }
 
-impl<'a> Default for SentryMetric<'a> {
+impl Default for SentryMetric<'_> {
     fn default() -> Self {
         SentryMetric {
             name: "",
@@ -397,28 +397,24 @@ mod tests {
                     value: MetricValue::Distribution(15055.0),
                     unit: MetricUnit::Information(InformationUnit::Byte),
                     tags: expected_tags.clone(),
-                    ..Default::default()
                 },
                 SentryMetric {
                     name: "router.connect",
                     value: MetricValue::Distribution(2.0),
                     unit: MetricUnit::Duration(DurationUnit::MilliSecond),
                     tags: expected_tags.clone(),
-                    ..Default::default()
                 },
                 SentryMetric {
                     name: "router.service",
                     value: MetricValue::Distribution(864.0),
                     unit: MetricUnit::Duration(DurationUnit::MilliSecond),
                     tags: expected_tags.clone(),
-                    ..Default::default()
                 },
                 SentryMetric {
                     name: "router.status.2xx",
                     value: MetricValue::Counter(1.0),
                     unit: MetricUnit::None,
                     tags: expected_tags.clone(),
-                    ..Default::default()
                 },
             ]
         );
@@ -457,28 +453,24 @@ mod tests {
                     value: MetricValue::Distribution(0.0),
                     unit: MetricUnit::Information(InformationUnit::Byte),
                     tags: expected_tags.clone(),
-                    ..Default::default()
                 },
                 SentryMetric {
                     name: "router.connect",
                     value: MetricValue::Distribution(0.0),
                     unit: MetricUnit::Duration(DurationUnit::MilliSecond),
                     tags: expected_tags.clone(),
-                    ..Default::default()
                 },
                 SentryMetric {
                     name: "router.service",
                     value: MetricValue::Distribution(30000.0),
                     unit: MetricUnit::Duration(DurationUnit::MilliSecond),
                     tags: expected_tags.clone(),
-                    ..Default::default()
                 },
                 SentryMetric {
                     name: "router.status.5xx",
                     value: MetricValue::Counter(1.0),
                     unit: MetricUnit::None,
                     tags: expected_tags.clone(),
-                    ..Default::default()
                 },
             ]
         );
@@ -487,7 +479,7 @@ mod tests {
     #[test]
     fn test_generate_scaling_metrics() {
         let result = generate_scaling_metrics(
-            &vec![ScalingEvent {
+            &[ScalingEvent {
                 proc: "web",
                 count: 99,
                 size: "huuuuge",
