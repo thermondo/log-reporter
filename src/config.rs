@@ -16,6 +16,7 @@ use std::future::Future;
 #[derive(Debug)]
 pub(crate) struct Destination {
     pub(crate) sentry_client: Arc<sentry::Client>,
+    pub(crate) graphite_api_key: Option<String>,
 
     /// store the last seen scaling events so we can re-send them,
     /// assuming that the dyno counts don't change between scaling events.
@@ -23,9 +24,13 @@ pub(crate) struct Destination {
 }
 
 impl Destination {
-    pub(crate) fn new(sentry_client: Arc<sentry::Client>) -> Self {
+    pub(crate) fn new(
+        sentry_client: Arc<sentry::Client>,
+        graphite_api_key: Option<String>,
+    ) -> Self {
         Self {
             sentry_client,
+            graphite_api_key,
             last_scaling_events: Mutex::new(None),
         }
     }
@@ -36,7 +41,6 @@ pub(crate) struct Config {
     pub port: u16,
     pub sentry_dsn: Option<String>,
     pub sentry_debug: bool,
-    pub sentry_report_metrics: bool,
     pub sentry_traces_sample_rate: f32,
     pub destinations: HashMap<String, Arc<Destination>>,
     /// clone this waitgroup for anything that the app needs to wait
@@ -51,7 +55,6 @@ impl Default for Config {
             port: 3000,
             sentry_dsn: None,
             sentry_debug: false,
-            sentry_report_metrics: false,
             destinations: HashMap::new(),
             waitgroup: Arc::new(RwLock::new(Some(WaitGroup::new()))),
             sentry_traces_sample_rate: 0.0,
@@ -102,9 +105,6 @@ impl Config {
             sentry_debug: env::var("SENTRY_DEBUG")
                 .map(|var| !var.is_empty())
                 .unwrap_or(false),
-            sentry_report_metrics: env::var("SENTRY_REPORT_METRICS")
-                .map(|var| !var.is_empty())
-                .unwrap_or(false),
             ..Default::default()
         };
 
@@ -114,7 +114,11 @@ impl Config {
             }
 
             let pieces: Vec<_> = value.trim().split('|').collect();
-            if let [logplex_token, sentry_environment, sentry_dsn, ..] = pieces[..] {
+            if pieces.len() >= 3 {
+                let logplex_token = pieces[0];
+                let sentry_environment = pieces[1];
+                let sentry_dsn = pieces[2];
+                let graphite_api_key = pieces.get(3);
                 let client = sentry::Client::from((
                     sentry_dsn.to_owned(),
                     sentry::ClientOptions {
@@ -127,7 +131,10 @@ impl Config {
                 if client.is_enabled() {
                     config.destinations.insert(
                         logplex_token.to_owned(),
-                        Arc::new(Destination::new(Arc::new(client))),
+                        Arc::new(Destination::new(
+                            Arc::new(client),
+                            graphite_api_key.map(|s| s.to_string()),
+                        )),
                     );
 
                     info!(
@@ -188,7 +195,7 @@ impl Config {
                 ..Default::default()
             },
         )));
-        let dest = Arc::new(Destination::new(client.clone()));
+        let dest = Arc::new(Destination::new(client.clone(), None));
         self.destinations
             .insert(logplex_token.to_owned(), dest.clone());
 
