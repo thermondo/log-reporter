@@ -17,7 +17,6 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 mod background;
 mod config;
 mod extractors;
-mod graphite;
 mod log_parser;
 mod metrics;
 mod reporter;

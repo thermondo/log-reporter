@@ -1,18 +1,15 @@
 use crate::{
-    config::{Config, Destination},
+    config::Destination,
     log_parser::{
         parse_dyno_error_code, parse_key_value_pairs, parse_log_line, parse_offer_extension_number,
         parse_offer_number, parse_project_reference, parse_scaling_event, parse_sfid, Kind,
         LogLine, LogMap,
     },
-    metrics::{
-        generate_metrics, generate_router_metrics, generate_scaling_metrics, proc_from_source,
-        report_metrics,
-    },
+    metrics::{generate_scaling_metrics, report_metrics},
 };
 use anyhow::{Context as _, Result};
 use axum::http::uri::Uri;
-use sentry::{metrics::Metric, Client, Hub, Level, Scope};
+use sentry::{Client, Hub, Level, Scope};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
@@ -122,12 +119,8 @@ fn send_to_sentry(sentry_client: Arc<Client>, message: SentryMessage) {
     info!(?uuid, last_event_id = ?hub.last_event_id(), "captured message");
 }
 
-#[instrument(fields(dsn=?destination.sentry_client.dsn()), skip(destination, config))]
-pub(crate) fn process_logs(
-    config: &Config,
-    destination: Arc<Destination>,
-    input: &str,
-) -> Result<()> {
+#[instrument(fields(dsn=?destination.sentry_client.dsn()), skip(destination))]
+pub(crate) fn process_logs(destination: Arc<Destination>, input: &str) -> Result<()> {
     for line in input.lines() {
         debug!("handling log line: {}", line);
 
@@ -149,11 +142,6 @@ pub(crate) fn process_logs(
         if matches!(log.kind, Kind::Heroku) && log.source == "router" {
             let map = parse_pairs()?;
 
-            if config.sentry_report_metrics {
-                debug!("trying to report router metrics");
-                report_metrics(&destination, generate_router_metrics(&map));
-            }
-
             debug!(?map, "got router log");
 
             let at = if let Some(at) = map.get("at") {
@@ -174,46 +162,27 @@ pub(crate) fn process_logs(
                 continue;
             };
 
-            if config.sentry_report_metrics {
-                destination
-                    .sentry_client
-                    .add_metric(Metric::count(format!("errors.http.{code}")).finish());
-            }
-
             if *code == "H12" {
                 if let Some(msg) = generate_request_timeout_message(&log, &map) {
                     send_to_sentry(destination.sentry_client.clone(), msg);
                 }
             }
         } else if let Ok((_, (code, name))) = parse_dyno_error_code(log.text) {
-            if config.sentry_report_metrics {
-                destination.sentry_client.add_metric(
-                    Metric::count(format!("errors.runtime.{code}"))
-                        .with_tag("source", log.source.to_owned())
-                        .with_tag("proc", proc_from_source(log.source).to_owned())
-                        .finish(),
-                );
-            }
             if let Some(msg) = generate_dyno_error_message(code, name, &log) {
                 send_to_sentry(destination.sentry_client.clone(), msg);
             }
         } else if matches!(log.kind, Kind::App)
             && log.source == "api"
-            && config.sentry_report_metrics
+            && destination.graphite_api_key.is_some()
         {
-            if let Ok((_, (events, user))) = parse_scaling_event(log.text) {
+            if let Ok((_, (events, _))) = parse_scaling_event(log.text) {
                 debug!("trying to report scaling metrics");
 
                 // store the scaling events in a cache so we can regularly re-send them.
                 let mut last_events = destination.last_scaling_events.lock().unwrap();
                 *last_events = Some(events.iter().map(Into::into).collect());
 
-                report_metrics(&destination, generate_scaling_metrics(&events, user));
-            }
-        } else if config.sentry_report_metrics {
-            if let Ok(pairs) = parse_pairs() {
-                debug!("trying to report generic metrics");
-                report_metrics(&destination, generate_metrics(&pairs));
+                report_metrics(destination.clone(), generate_scaling_metrics(&events));
             }
         }
     }
@@ -241,8 +210,8 @@ mod tests {
             ";
 
         let events =
-            config.with_captured_sentry_events_sync("logplex_token", |sentry_client, config| {
-                process_logs(&config, sentry_client, input).expect("error processing logs");
+            config.with_captured_sentry_events_sync("logplex_token", |sentry_client, _config| {
+                process_logs(sentry_client, input).expect("error processing logs");
             });
 
         assert_eq!(events.len(), 1);
@@ -269,8 +238,8 @@ mod tests {
             ";
 
         let events =
-            config.with_captured_sentry_events_sync("logplex_token", |sentry_client, config| {
-                process_logs(&config, sentry_client, input).expect("error processing logs");
+            config.with_captured_sentry_events_sync("logplex_token", |sentry_client, _config| {
+                process_logs(sentry_client, input).expect("error processing logs");
             });
 
         assert_eq!(events.len(), 1);

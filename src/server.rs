@@ -74,7 +74,7 @@ pub(crate) async fn handle_logs(
                 }
             };
 
-            if let Err(err) = process_logs(&config, destination, body_text) {
+            if let Err(err) = process_logs(destination, body_text) {
                 warn!("error processing logs: {:?}", err);
             }
             // we actually don't need the `drop` here,
