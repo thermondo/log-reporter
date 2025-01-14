@@ -71,19 +71,20 @@ impl Config {
     /// will
     /// - wait for all running waitgroup tickets
     /// - shut down sentry clients
-    pub(crate) fn shutdown(&self) {
+    /// - send pending librato metrics
+    pub(crate) async fn shutdown(&self) {
         info!(?self.waitgroup, "waiting for pending tasks");
 
         if let Some(waitgroup) = self.waitgroup.write().unwrap().take() {
             waitgroup.wait();
         }
 
-        info!("flushing sentry & librato events");
+        info!("flushing sentry events & librato metrics");
         for destination in self.destinations.values() {
             destination.sentry_client.close(None);
 
             if let Some(librato_client) = &destination.librato_client {
-                librato_client.shutdown();
+                librato_client.shutdown().await;
             }
         }
     }

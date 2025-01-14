@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
-    config.shutdown();
+    config.shutdown().await;
 
     Ok(())
 }

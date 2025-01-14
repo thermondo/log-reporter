@@ -7,7 +7,7 @@ use std::{
 };
 use tracing::error;
 
-const MAX_MEASURE_MEASUREMENTS_PER_REQUEST: usize = 300;
+const MAX_MEASURE_MEASUREMENTS_PER_REQUEST: usize = 300; // max as per documentation
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
@@ -50,6 +50,9 @@ impl LibratoClient {
         }
     }
 
+    /// add measurement to the local queue of measurements to be sent.
+    /// Will regularly flush the queue and send the measurements to librato
+    /// in the background.
     pub(crate) fn add_measurement(&self, measurement: Measurement) {
         let mut state = self.inner.lock().unwrap();
         state.queue.push(measurement);
@@ -57,12 +60,12 @@ impl LibratoClient {
         if state.queue.len() > MAX_MEASURE_MEASUREMENTS_PER_REQUEST
             || state.last_flush.elapsed() > FLUSH_INTERVAL
         {
-            self.flush(&mut state);
+            self.trigger_background_flush(&mut state);
         }
     }
 
-    fn flush(&self, state: &mut State) {
-        tokio::spawn({
+    fn trigger_background_flush(&self, state: &mut State) -> tokio::task::JoinHandle<()> {
+        let handle = tokio::spawn({
             let queue = state.queue.clone();
             let username = self.username.clone();
             let token = self.token.clone();
@@ -74,19 +77,19 @@ impl LibratoClient {
         });
         state.last_flush = Instant::now();
         state.queue.clear();
+
+        handle
     }
 
-    pub(crate) fn shutdown(&self) {
+    /// shut down the librato client, sending all pending events to librato.
+    pub(crate) async fn shutdown(&self) {
         let mut state = self.inner.lock().unwrap();
-        self.flush(&mut state);
+        let handle = self.trigger_background_flush(&mut state);
+        handle.await.unwrap();
     }
 
-    /// uses old API http://api-docs-archive.librato.com/
-    pub(crate) async fn send(
-        username: String,
-        token: String,
-        measurements: Vec<Measurement>,
-    ) -> Result<()> {
+    /// uses old API http://api-docs-archive.librato.com/#create-a-metric
+    async fn send(username: String, token: String, measurements: Vec<Measurement>) -> Result<()> {
         let response = reqwest::Client::new()
             .post("https://metrics-api.librato.com/v1/metrics")
             .basic_auth(username, Some(token))
@@ -120,5 +123,21 @@ impl LibratoClient {
         }
 
         Ok(())
+    }
+}
+
+impl Drop for LibratoClient {
+    /// make sure to flush all pending events to librato before dropping the client.
+    /// Can panic if there no available tokio runtime.
+    /// If there are no queued events, we'll return immediately to prevent the panic
+    /// without runtime when we wouldn't need it anyways.
+    fn drop(&mut self) {
+        {
+            let state = self.inner.lock().unwrap();
+            if state.queue.is_empty() {
+                return;
+            }
+        }
+        tokio::runtime::Handle::current().block_on(self.shutdown());
     }
 }
