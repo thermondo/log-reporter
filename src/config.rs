@@ -147,7 +147,11 @@ impl Config {
                 if client.is_enabled() {
                     let librato_client =
                         if let (Some(username), Some(token)) = (pieces.get(3), pieces.get(4)) {
-                            Some(LibratoClient::new(username.to_string(), token.to_string()))
+                            Some(LibratoClient::new(
+                                username.to_string(),
+                                token.to_string(),
+                                config.new_waitgroup_ticket(),
+                            ))
                         } else {
                             None
                         };

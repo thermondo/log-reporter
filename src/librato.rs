@@ -1,11 +1,12 @@
 use anyhow::{bail, Result};
 use chrono::{DateTime, FixedOffset};
+use crossbeam_utils::sync::WaitGroup;
 use serde_json::json;
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
-use tracing::error;
+use tracing::{debug, error, info};
 
 const MAX_MEASURE_MEASUREMENTS_PER_REQUEST: usize = 300; // max as per documentation
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
@@ -29,6 +30,7 @@ pub(crate) struct Measurement {
 struct State {
     queue: Vec<Measurement>,
     last_flush: Instant,
+    waitgroup: Option<WaitGroup>,
 }
 
 impl State {
@@ -46,11 +48,16 @@ pub(crate) struct LibratoClient {
 }
 
 impl LibratoClient {
-    pub(crate) fn new(username: impl Into<String>, token: impl Into<String>) -> LibratoClient {
+    pub(crate) fn new(
+        username: impl Into<String>,
+        token: impl Into<String>,
+        waitgroup: Option<WaitGroup>,
+    ) -> LibratoClient {
         Self {
             username: username.into(),
             token: token.into(),
             inner: Mutex::new(State {
+                waitgroup,
                 queue: Vec::new(),
                 last_flush: Instant::now(),
             }),
@@ -67,14 +74,17 @@ impl LibratoClient {
         if state.queue.len() > MAX_MEASURE_MEASUREMENTS_PER_REQUEST
             || state.last_flush.elapsed() > FLUSH_INTERVAL
         {
+            debug!(?state.queue, "triggering background flushing to librato");
             tokio::spawn({
                 let queue = state.queue.clone();
                 let username = self.username.clone();
                 let token = self.token.clone();
+                let waitgroup = state.waitgroup.clone();
                 async move {
                     if let Err(err) = LibratoClient::send(&username, &token, &queue).await {
                         error!(?err, username, ?queue, "error sending metrics to librato");
                     }
+                    drop(waitgroup);
                 }
             });
             state.reset();
@@ -83,20 +93,26 @@ impl LibratoClient {
 
     /// shut down the librato client, sending all pending events to librato.
     pub(crate) async fn shutdown(&self) -> Result<()> {
+        debug!("triggering shutdown of librato client");
         let mut state = self.inner.lock().unwrap();
         if !state.queue.is_empty() {
             LibratoClient::send(&self.username, &self.token, &state.queue).await?;
             state.reset();
         }
+        state.waitgroup.take();
         Ok(())
     }
 
-    /// uses old API http://api-docs-archive.librato.com/#create-a-metric
+    /// Actually send the measurements to librato using their API.
+    /// uses old source-based API, since that's what the Heroku addon instances use.
+    /// See http://api-docs-archive.librato.com/#create-a-metric
+    #[tracing::instrument(skip(token, measurements))]
     async fn send(
-        username: impl AsRef<str>,
-        token: impl AsRef<str>,
+        username: impl AsRef<str> + std::fmt::Debug,
+        token: impl AsRef<str> + std::fmt::Debug,
         measurements: &[Measurement],
     ) -> Result<()> {
+        debug!("making API call to librato");
         let response = reqwest::Client::new()
             .post("https://metrics-api.librato.com/v1/metrics")
             .basic_auth(username.as_ref(), Some(token.as_ref()))
