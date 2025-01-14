@@ -1,4 +1,4 @@
-use crate::{librato::LibratoClient, log_parser::OwnedScalingEvent};
+use crate::{librato, log_parser::OwnedScalingEvent};
 use anyhow::Result;
 use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
@@ -17,7 +17,7 @@ use std::future::Future;
 pub(crate) struct Destination {
     pub(crate) sentry_client: Arc<sentry::Client>,
 
-    pub(crate) librato_client: Option<LibratoClient>,
+    pub(crate) librato_client: Option<librato::Client>,
 
     /// store the last seen scaling events so we can re-send them,
     /// assuming that the dyno counts don't change between scaling events.
@@ -27,7 +27,7 @@ pub(crate) struct Destination {
 impl Destination {
     pub(crate) fn new(
         sentry_client: Arc<sentry::Client>,
-        librato_client: Option<LibratoClient>,
+        librato_client: Option<librato::Client>,
     ) -> Self {
         Self {
             sentry_client,
@@ -148,7 +148,7 @@ impl Config {
                     let librato_client =
                         if let (Some(username), Some(token)) = (pieces.get(3), pieces.get(4)) {
                             info!(username, "configuring librato client");
-                            Some(LibratoClient::new(
+                            Some(librato::Client::new(
                                 username.to_string(),
                                 token.to_string(),
                                 config.new_waitgroup_ticket(),

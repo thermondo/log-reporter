@@ -40,18 +40,18 @@ impl State {
 }
 
 #[derive(Debug)]
-pub(crate) struct LibratoClient {
+pub(crate) struct Client {
     pub(crate) username: String,
     token: String,
     inner: Mutex<State>,
 }
 
-impl LibratoClient {
+impl Client {
     pub(crate) fn new(
         username: impl Into<String>,
         token: impl Into<String>,
         waitgroup: Option<WaitGroup>,
-    ) -> LibratoClient {
+    ) -> Client {
         Self {
             username: username.into(),
             token: token.into(),
@@ -80,7 +80,7 @@ impl LibratoClient {
                 let token = self.token.clone();
                 let waitgroup = state.waitgroup.clone();
                 async move {
-                    if let Err(err) = LibratoClient::send(&username, &token, &queue).await {
+                    if let Err(err) = Client::send(&username, &token, &queue).await {
                         error!(?err, username, ?queue, "error sending metrics to librato");
                     }
                     drop(waitgroup);
@@ -95,7 +95,7 @@ impl LibratoClient {
         debug!("triggering shutdown of librato client");
         let mut state = self.inner.lock().await;
         if !state.queue.is_empty() {
-            LibratoClient::send(&self.username, &self.token, &state.queue).await?;
+            Client::send(&self.username, &self.token, &state.queue).await?;
             state.reset();
         }
         state.waitgroup.take();
@@ -148,7 +148,7 @@ impl LibratoClient {
     }
 }
 
-impl Drop for LibratoClient {
+impl Drop for Client {
     /// make sure to flush all pending events to librato before dropping the client.
     /// Can panic if
     /// - there no available tokio runtime.
