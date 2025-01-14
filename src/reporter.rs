@@ -6,8 +6,8 @@ use crate::{
         LogLine, LogMap,
     },
     metrics::{
-        generate_metrics, generate_router_metrics, generate_scaling_metrics, proc_from_source,
-        report_metrics,
+        generate_librato_scaling_metrics, generate_metrics, generate_router_metrics,
+        generate_scaling_metrics, proc_from_source, report_metrics,
     },
 };
 use anyhow::{Context as _, Result};
@@ -199,7 +199,7 @@ pub(crate) fn process_logs(
             }
         } else if matches!(log.kind, Kind::App)
             && log.source == "api"
-            && config.sentry_report_metrics
+            && (config.sentry_report_metrics || destination.librato_client.is_some())
         {
             if let Ok((_, (events, user))) = parse_scaling_event(log.text) {
                 debug!("trying to report scaling metrics");
@@ -208,7 +208,15 @@ pub(crate) fn process_logs(
                 let mut last_events = destination.last_scaling_events.lock().unwrap();
                 *last_events = Some(events.iter().map(Into::into).collect());
 
-                report_metrics(&destination, generate_scaling_metrics(&events, user));
+                if config.sentry_report_metrics {
+                    report_metrics(&destination, generate_scaling_metrics(&events, user));
+                }
+
+                if let Some(ref librato_client) = destination.librato_client {
+                    for measurement in generate_librato_scaling_metrics(&log.timestamp, &events) {
+                        librato_client.add_measurement(measurement);
+                    }
+                }
             }
         } else if config.sentry_report_metrics {
             if let Ok(pairs) = parse_pairs() {

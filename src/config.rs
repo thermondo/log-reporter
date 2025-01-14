@@ -1,4 +1,4 @@
-use crate::log_parser::OwnedScalingEvent;
+use crate::{librato::LibratoClient, log_parser::OwnedScalingEvent};
 use anyhow::Result;
 use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
@@ -17,15 +17,21 @@ use std::future::Future;
 pub(crate) struct Destination {
     pub(crate) sentry_client: Arc<sentry::Client>,
 
+    pub(crate) librato_client: Option<LibratoClient>,
+
     /// store the last seen scaling events so we can re-send them,
     /// assuming that the dyno counts don't change between scaling events.
     pub(crate) last_scaling_events: Mutex<Option<Vec<OwnedScalingEvent>>>,
 }
 
 impl Destination {
-    pub(crate) fn new(sentry_client: Arc<sentry::Client>) -> Self {
+    pub(crate) fn new(
+        sentry_client: Arc<sentry::Client>,
+        librato_client: Option<LibratoClient>,
+    ) -> Self {
         Self {
             sentry_client,
+            librato_client,
             last_scaling_events: Mutex::new(None),
         }
     }
@@ -72,9 +78,13 @@ impl Config {
             waitgroup.wait();
         }
 
-        info!("flushing sentry events");
+        info!("flushing sentry & librato events");
         for destination in self.destinations.values() {
             destination.sentry_client.close(None);
+
+            if let Some(librato_client) = &destination.librato_client {
+                librato_client.shutdown();
+            }
         }
     }
 
@@ -114,7 +124,11 @@ impl Config {
             }
 
             let pieces: Vec<_> = value.trim().split('|').collect();
-            if let [logplex_token, sentry_environment, sentry_dsn, ..] = pieces[..] {
+            if pieces.len() >= 3 {
+                let logplex_token = pieces[0];
+                let sentry_environment = pieces[1];
+                let sentry_dsn = pieces[2];
+
                 let client = sentry::Client::from((
                     sentry_dsn.to_owned(),
                     sentry::ClientOptions {
@@ -125,9 +139,16 @@ impl Config {
                     },
                 ));
                 if client.is_enabled() {
+                    let librato_client =
+                        if let (Some(username), Some(token)) = (pieces.get(3), pieces.get(4)) {
+                            Some(LibratoClient::new(username.to_string(), token.to_string()))
+                        } else {
+                            None
+                        };
+
                     config.destinations.insert(
                         logplex_token.to_owned(),
-                        Arc::new(Destination::new(Arc::new(client))),
+                        Arc::new(Destination::new(Arc::new(client), librato_client)),
                     );
 
                     info!(
