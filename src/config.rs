@@ -157,7 +157,7 @@ impl Config {
                             token.to_string(),
                             config.new_waitgroup_ticket(),
                             #[cfg(test)]
-                            "",
+                            "invalid_endpoint",
                         ))
                     } else {
                         None
