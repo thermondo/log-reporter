@@ -2,8 +2,10 @@ use anyhow::{bail, Result};
 use chrono::{DateTime, FixedOffset};
 use crossbeam_utils::sync::WaitGroup;
 use serde_json::json;
-use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 use tracing::{debug, error};
 
 const MAX_MEASURE_MEASUREMENTS_PER_REQUEST: usize = 300; // max as per documentation
@@ -43,6 +45,7 @@ impl State {
 pub(crate) struct Client {
     pub(crate) username: String,
     token: String,
+    endpoint: String,
     inner: Mutex<State>,
 }
 
@@ -51,10 +54,15 @@ impl Client {
         username: impl Into<String>,
         token: impl Into<String>,
         waitgroup: Option<WaitGroup>,
+        #[cfg(test)] endpoint: impl Into<String>,
     ) -> Client {
         Self {
             username: username.into(),
             token: token.into(),
+            #[cfg(test)]
+            endpoint: endpoint.into(),
+            #[cfg(not(test))]
+            endpoint: "https://metrics-api.librato.com/v1/metrics".to_string(),
             inner: Mutex::new(State {
                 waitgroup,
                 queue: Vec::new(),
@@ -67,7 +75,7 @@ impl Client {
     /// Will regularly flush the queue and send the measurements to librato
     /// in the background.
     pub(crate) fn add_measurement(&self, measurement: Measurement) {
-        let mut state = self.inner.blocking_lock();
+        let mut state = self.inner.lock().unwrap();
         state.queue.push(measurement);
 
         if state.queue.len() > MAX_MEASURE_MEASUREMENTS_PER_REQUEST
@@ -78,9 +86,10 @@ impl Client {
                 let queue = state.queue.clone();
                 let username = self.username.clone();
                 let token = self.token.clone();
+                let endpoint = self.endpoint.clone();
                 let waitgroup = state.waitgroup.clone();
                 async move {
-                    if let Err(err) = Client::send(&username, &token, &queue).await {
+                    if let Err(err) = Client::send(&username, &token, &endpoint, &queue).await {
                         error!(?err, username, ?queue, "error sending metrics to librato");
                     }
                     drop(waitgroup);
@@ -93,11 +102,15 @@ impl Client {
     /// shut down the librato client, sending all pending events to librato.
     pub(crate) async fn shutdown(&self) -> Result<()> {
         debug!("triggering shutdown of librato client");
-        let mut state = self.inner.lock().await;
-        state.waitgroup.take();
-        if !state.queue.is_empty() {
-            Client::send(&self.username, &self.token, &state.queue).await?;
+        let queue = {
+            let mut state = self.inner.lock().unwrap();
+            state.waitgroup.take();
+            let queue = state.queue.to_vec();
             state.reset();
+            queue
+        };
+        if !queue.is_empty() {
+            Client::send(&self.username, &self.token, &self.endpoint, &queue).await?;
         }
         Ok(())
     }
@@ -109,11 +122,12 @@ impl Client {
     async fn send(
         username: impl AsRef<str> + std::fmt::Debug,
         token: impl AsRef<str> + std::fmt::Debug,
+        endpoint: impl AsRef<str> + std::fmt::Debug,
         measurements: &[Measurement],
     ) -> Result<()> {
         debug!("making API call to librato");
         let response = reqwest::Client::new()
-            .post("https://metrics-api.librato.com/v1/metrics")
+            .post(endpoint.as_ref())
             .basic_auth(username.as_ref(), Some(token.as_ref()))
             .json(&json!({
                "gauges": measurements.iter().filter(|m| matches!(m.kind, Kind::Gauge)).map(|m| {
@@ -144,6 +158,72 @@ impl Client {
             );
         }
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_empty_shutdown() {
+        let client = Client::new("username", "token", None, "invalid_endpoint");
+
+        assert!(client.shutdown().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_fails_with_queued_measurements() {
+        let client = Client::new("username", "token", None, "invalid_endpoint");
+        client.add_measurement(Measurement {
+            kind: Kind::Gauge,
+            measure_time: chrono::Utc::now().into(),
+            value: 1.0,
+            name: "test".into(),
+            source: "test".into(),
+        });
+
+        assert!(client.shutdown().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_full_send() -> Result<()> {
+        let timestamp = chrono::Utc::now();
+
+        let mut server = mockito::Server::new_async().await;
+
+        let m = server
+            .mock("POST", "/")
+            .match_request(move |request| {
+                let body: serde_json::Value =
+                    serde_json::from_slice(request.body().unwrap()).unwrap();
+                body == serde_json::json!({
+                    "counters": [],
+                    "gauges": [
+                        {
+                            "measure_time": timestamp.timestamp(),
+                            "name": "testname",
+                            "source": "testsource",
+                            "value": 42.0
+                        }
+                    ]
+                })
+            })
+            .create();
+
+        let client = Client::new("username", "token", None, server.url());
+        client.add_measurement(Measurement {
+            kind: Kind::Gauge,
+            measure_time: timestamp.into(),
+            value: 42.0,
+            name: "testname".into(),
+            source: "testsource".into(),
+        });
+
+        client.shutdown().await?;
+
+        m.assert_async().await;
         Ok(())
     }
 }

@@ -73,8 +73,6 @@ impl Config {
     /// - shut down sentry clients
     /// - send pending librato metrics
     pub(crate) async fn shutdown(&self) {
-        info!(?self.waitgroup, "waiting for pending tasks");
-
         info!("flushing librato metrics");
         for destination in self.destinations.values() {
             if let Some(librato_client) = &destination.librato_client {
@@ -90,11 +88,12 @@ impl Config {
             }
         }
 
+        info!(?self.waitgroup, "waiting for pending background tasks");
         if let Some(waitgroup) = self.waitgroup.write().unwrap().take() {
             waitgroup.wait();
         }
 
-        info!("flushing sentry events ");
+        info!("flushing sentry events");
         for destination in self.destinations.values() {
             destination.sentry_client.close(None);
         }
@@ -157,6 +156,8 @@ impl Config {
                             username.to_string(),
                             token.to_string(),
                             config.new_waitgroup_ticket(),
+                            #[cfg(test)]
+                            "",
                         ))
                     } else {
                         None
