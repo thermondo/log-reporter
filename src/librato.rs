@@ -2,10 +2,8 @@ use anyhow::{bail, Result};
 use chrono::{DateTime, FixedOffset};
 use crossbeam_utils::sync::WaitGroup;
 use serde_json::json;
-use std::{
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use tracing::{debug, error};
 
 const MAX_MEASURE_MEASUREMENTS_PER_REQUEST: usize = 300; // max as per documentation
@@ -69,7 +67,7 @@ impl LibratoClient {
     /// Will regularly flush the queue and send the measurements to librato
     /// in the background.
     pub(crate) fn add_measurement(&self, measurement: Measurement) {
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.blocking_lock();
         state.queue.push(measurement);
 
         if state.queue.len() > MAX_MEASURE_MEASUREMENTS_PER_REQUEST
@@ -95,26 +93,12 @@ impl LibratoClient {
     /// shut down the librato client, sending all pending events to librato.
     pub(crate) async fn shutdown(&self) -> Result<()> {
         debug!("triggering shutdown of librato client");
-        let queue = {
-            let mut state = self.inner.lock().unwrap();
-            state.waitgroup.take();
-
-            let queue = state.queue.clone();
+        let mut state = self.inner.lock().await;
+        if !state.queue.is_empty() {
+            LibratoClient::send(&self.username, &self.token, &state.queue).await?;
             state.reset();
-
-            queue
-        };
-
-        if !queue.is_empty() {
-            if let Err(err) = LibratoClient::send(&self.username, &self.token, &queue).await {
-                // re-insert queue into state.
-                // This handles the case of an error sending the events, without
-                // forcing us to use an async mutex that can be held over await points.
-                let mut state = self.inner.lock().unwrap();
-                state.queue.clone_from(&queue);
-                return Err(err);
-            }
         }
+        state.waitgroup.take();
         Ok(())
     }
 
@@ -176,7 +160,7 @@ impl Drop for LibratoClient {
     /// Generally it's better to call `shutdown` explicitly.
     fn drop(&mut self) {
         {
-            let state = self.inner.lock().unwrap();
+            let state = self.inner.blocking_lock();
             if state.queue.is_empty() {
                 return;
             }
