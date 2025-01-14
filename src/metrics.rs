@@ -159,7 +159,7 @@ pub(crate) fn generate_librato_scaling_metrics(
     timestamp: &DateTime<FixedOffset>,
     events: &[ScalingEvent<'_>],
 ) -> Vec<librato::Measurement> {
-    let mut result = Vec::with_capacity(events.len());
+    let mut result = Vec::with_capacity(events.len() * 2);
 
     for event in events {
         result.push(librato::Measurement {

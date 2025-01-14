@@ -6,13 +6,14 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 const MAX_MEASURE_MEASUREMENTS_PER_REQUEST: usize = 300; // max as per documentation
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub(crate) enum Kind {
+    #[allow(dead_code)]
     Counter,
     Gauge,
 }

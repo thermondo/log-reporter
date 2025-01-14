@@ -232,7 +232,7 @@ mod tests {
             .await;
 
         // wait for async tasks to finish
-        config.shutdown();
+        config.shutdown().await;
 
         let events: Vec<sentry::protocol::Event<'static>> = test_sentry_transport
             .fetch_and_clear_envelopes()

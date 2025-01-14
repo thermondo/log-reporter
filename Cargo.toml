@@ -7,7 +7,7 @@ edition = "2021"
 anyhow = "1.0.71"
 axum = { version = "0.8.1" }
 axum-extra = { version = "0.10.0", features = ["typed-header"] }
-chrono = { version = "0.4.24", default-features = false }
+chrono = { version = "0.4.24", default-features = false, features = ["clock"] }
 crossbeam-utils = "0.8.15"
 hyper = "1.1.0"
 nom = "7.1.3"
