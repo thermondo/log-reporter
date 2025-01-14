@@ -147,6 +147,7 @@ impl Config {
                 if client.is_enabled() {
                     let librato_client =
                         if let (Some(username), Some(token)) = (pieces.get(3), pieces.get(4)) {
+                            info!(username, "configuring librato client");
                             Some(LibratoClient::new(
                                 username.to_string(),
                                 token.to_string(),
