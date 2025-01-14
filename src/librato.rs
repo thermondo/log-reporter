@@ -3,8 +3,8 @@ use serde_json::json;
 
 const LIRATO_USERNAME: &str = "heroku+76cc8300-be35-4c6c-a474-85836ca8c57e@solarwinds.com";
 const LIBRATO_TOKEN: &str = "8b41266ad8e23a240f7fef2359c88dac7f52a917d35148c994d32edfd8fc75a4";
-// TODO: usee old API http://api-docs-archive.librato.com/
 
+/// uses old API http://api-docs-archive.librato.com/
 pub(crate) async fn test() -> Result<()> {
     let response = reqwest::Client::new()
         .post("https://metrics-api.librato.com/v1/metrics")
