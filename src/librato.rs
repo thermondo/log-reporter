@@ -10,6 +10,8 @@ use tracing::{debug, error};
 
 const MAX_MEASURE_MEASUREMENTS_PER_REQUEST: usize = 300; // max as per documentation
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
+#[cfg(not(test))]
+const DEFAULT_METRIC_ENDPOINT: &str = "https://metrics-api.librato.com/v1/metrics";
 
 #[derive(Debug, Clone)]
 pub(crate) enum Kind {
@@ -45,6 +47,7 @@ impl State {
 pub(crate) struct Client {
     pub(crate) username: String,
     token: String,
+    #[cfg(test)]
     endpoint: String,
     inner: Mutex<State>,
 }
@@ -61,8 +64,6 @@ impl Client {
             token: token.into(),
             #[cfg(test)]
             endpoint: endpoint.into(),
-            #[cfg(not(test))]
-            endpoint: "https://metrics-api.librato.com/v1/metrics".to_string(),
             inner: Mutex::new(State {
                 waitgroup,
                 queue: Vec::new(),
@@ -86,10 +87,21 @@ impl Client {
                 let queue = state.queue.clone();
                 let username = self.username.clone();
                 let token = self.token.clone();
+                #[cfg(test)]
                 let endpoint = self.endpoint.clone();
                 let waitgroup = state.waitgroup.clone();
                 async move {
-                    if let Err(err) = Client::send(&username, &token, &endpoint, &queue).await {
+                    if let Err(err) = Client::send(
+                        &username,
+                        &token,
+                        #[cfg(test)]
+                        &endpoint,
+                        #[cfg(not(test))]
+                        DEFAULT_METRIC_ENDPOINT,
+                        &queue,
+                    )
+                    .await
+                    {
                         error!(?err, username, ?queue, "error sending metrics to librato");
                     }
                     drop(waitgroup);
@@ -110,7 +122,16 @@ impl Client {
             queue
         };
         if !queue.is_empty() {
-            Client::send(&self.username, &self.token, &self.endpoint, &queue).await?;
+            Client::send(
+                &self.username,
+                &self.token,
+                #[cfg(test)]
+                &self.endpoint,
+                #[cfg(not(test))]
+                DEFAULT_METRIC_ENDPOINT,
+                &queue,
+            )
+            .await?;
         }
         Ok(())
     }
