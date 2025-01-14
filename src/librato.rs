@@ -31,9 +31,16 @@ struct State {
     last_flush: Instant,
 }
 
+impl State {
+    fn reset(&mut self) {
+        self.queue.clear();
+        self.last_flush = Instant::now();
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct LibratoClient {
-    username: String,
+    pub(crate) username: String,
     token: String,
     inner: Mutex<State>,
 }
@@ -60,39 +67,39 @@ impl LibratoClient {
         if state.queue.len() > MAX_MEASURE_MEASUREMENTS_PER_REQUEST
             || state.last_flush.elapsed() > FLUSH_INTERVAL
         {
-            self.trigger_background_flush(&mut state);
+            tokio::spawn({
+                let queue = state.queue.clone();
+                let username = self.username.clone();
+                let token = self.token.clone();
+                async move {
+                    if let Err(err) = LibratoClient::send(&username, &token, &queue).await {
+                        error!(?err, username, ?queue, "error sending metrics to librato");
+                    }
+                }
+            });
+            state.reset();
         }
     }
 
-    fn trigger_background_flush(&self, state: &mut State) -> tokio::task::JoinHandle<()> {
-        let handle = tokio::spawn({
-            let queue = state.queue.clone();
-            let username = self.username.clone();
-            let token = self.token.clone();
-            async move {
-                if let Err(err) = LibratoClient::send(username, token, queue).await {
-                    error!(?err, "error sending metrics to librato");
-                }
-            }
-        });
-        state.last_flush = Instant::now();
-        state.queue.clear();
-
-        handle
-    }
-
     /// shut down the librato client, sending all pending events to librato.
-    pub(crate) async fn shutdown(&self) {
+    pub(crate) async fn shutdown(&self) -> Result<()> {
         let mut state = self.inner.lock().unwrap();
-        let handle = self.trigger_background_flush(&mut state);
-        handle.await.unwrap();
+        if !state.queue.is_empty() {
+            LibratoClient::send(&self.username, &self.token, &state.queue).await?;
+            state.reset();
+        }
+        Ok(())
     }
 
     /// uses old API http://api-docs-archive.librato.com/#create-a-metric
-    async fn send(username: String, token: String, measurements: Vec<Measurement>) -> Result<()> {
+    async fn send(
+        username: impl AsRef<str>,
+        token: impl AsRef<str>,
+        measurements: &[Measurement],
+    ) -> Result<()> {
         let response = reqwest::Client::new()
             .post("https://metrics-api.librato.com/v1/metrics")
-            .basic_auth(username, Some(token))
+            .basic_auth(username.as_ref(), Some(token.as_ref()))
             .json(&json!({
                "gauges": measurements.iter().filter(|m| matches!(m.kind, Kind::Gauge)).map(|m| {
                     json!({
@@ -128,9 +135,13 @@ impl LibratoClient {
 
 impl Drop for LibratoClient {
     /// make sure to flush all pending events to librato before dropping the client.
-    /// Can panic if there no available tokio runtime.
+    /// Can panic if
+    /// - there no available tokio runtime.
+    /// - there is an error sending the events to librato.
     /// If there are no queued events, we'll return immediately to prevent the panic
     /// without runtime when we wouldn't need it anyways.
+    ///
+    /// Generally it's better to call `shutdown` explicitly.
     fn drop(&mut self) {
         {
             let state = self.inner.lock().unwrap();
@@ -138,6 +149,8 @@ impl Drop for LibratoClient {
                 return;
             }
         }
-        tokio::runtime::Handle::current().block_on(self.shutdown());
+        tokio::runtime::Handle::current()
+            .block_on(self.shutdown())
+            .expect("error sending metrics");
     }
 }

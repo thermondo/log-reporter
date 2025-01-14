@@ -8,7 +8,7 @@ use std::{
     env,
     sync::{Arc, Mutex, RwLock},
 };
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 #[cfg(test)]
 use std::future::Future;
@@ -84,7 +84,12 @@ impl Config {
             destination.sentry_client.close(None);
 
             if let Some(librato_client) = &destination.librato_client {
-                librato_client.shutdown().await;
+                if let Err(err) = librato_client.shutdown().await {
+                    warn!(
+                        ?err,
+                        librato_client.username, "error shutting down librato client"
+                    );
+                };
             }
         }
     }
