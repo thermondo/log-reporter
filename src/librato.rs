@@ -95,12 +95,26 @@ impl LibratoClient {
     /// shut down the librato client, sending all pending events to librato.
     pub(crate) async fn shutdown(&self) -> Result<()> {
         debug!("triggering shutdown of librato client");
-        let mut state = self.inner.lock().unwrap();
-        if !state.queue.is_empty() {
-            LibratoClient::send(&self.username, &self.token, &state.queue).await?;
+        let queue = {
+            let mut state = self.inner.lock().unwrap();
+            state.waitgroup.take();
+
+            let queue = state.queue.clone();
             state.reset();
+
+            queue
+        };
+
+        if !queue.is_empty() {
+            if let Err(err) = LibratoClient::send(&self.username, &self.token, &queue).await {
+                // re-insert queue into state.
+                // This handles the case of an error sending the events, without
+                // forcing us to use an async mutex that can be held over await points.
+                let mut state = self.inner.lock().unwrap();
+                state.queue.clone_from(&queue);
+                return Err(err);
+            }
         }
-        state.waitgroup.take();
         Ok(())
     }
 
@@ -155,6 +169,7 @@ impl Drop for LibratoClient {
     /// Can panic if
     /// - there no available tokio runtime.
     /// - there is an error sending the events to librato.
+    ///
     /// If there are no queued events, we'll return immediately to prevent the panic
     /// without runtime when we wouldn't need it anyways.
     ///
