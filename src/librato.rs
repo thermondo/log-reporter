@@ -94,11 +94,11 @@ impl Client {
     pub(crate) async fn shutdown(&self) -> Result<()> {
         debug!("triggering shutdown of librato client");
         let mut state = self.inner.lock().await;
+        state.waitgroup.take();
         if !state.queue.is_empty() {
             Client::send(&self.username, &self.token, &state.queue).await?;
             state.reset();
         }
-        state.waitgroup.take();
         Ok(())
     }
 
@@ -145,28 +145,5 @@ impl Client {
         }
 
         Ok(())
-    }
-}
-
-impl Drop for Client {
-    /// make sure to flush all pending events to librato before dropping the client.
-    /// Can panic if
-    /// - there no available tokio runtime.
-    /// - there is an error sending the events to librato.
-    ///
-    /// If there are no queued events, we'll return immediately to prevent the panic
-    /// without runtime when we wouldn't need it anyways.
-    ///
-    /// Generally it's better to call `shutdown` explicitly.
-    fn drop(&mut self) {
-        {
-            let state = self.inner.blocking_lock();
-            if state.queue.is_empty() {
-                return;
-            }
-        }
-        tokio::runtime::Handle::current()
-            .block_on(self.shutdown())
-            .expect("error sending metrics");
     }
 }

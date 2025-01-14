@@ -75,15 +75,12 @@ impl Config {
     pub(crate) async fn shutdown(&self) {
         info!(?self.waitgroup, "waiting for pending tasks");
 
-        if let Some(waitgroup) = self.waitgroup.write().unwrap().take() {
-            waitgroup.wait();
-        }
-
-        info!("flushing sentry events & librato metrics");
+        info!("flushing librato metrics");
         for destination in self.destinations.values() {
-            destination.sentry_client.close(None);
-
             if let Some(librato_client) = &destination.librato_client {
+                // we have to do this before we wait for the waitgroups,
+                // since we might have running background send-to-librato tasks.
+                // the shutdown itself won't generate new tasks, so we're fine here.
                 if let Err(err) = librato_client.shutdown().await {
                     warn!(
                         ?err,
@@ -91,6 +88,15 @@ impl Config {
                     );
                 };
             }
+        }
+
+        if let Some(waitgroup) = self.waitgroup.write().unwrap().take() {
+            waitgroup.wait();
+        }
+
+        info!("flushing sentry events ");
+        for destination in self.destinations.values() {
+            destination.sentry_client.close(None);
         }
     }
 
@@ -145,17 +151,16 @@ impl Config {
                     },
                 ));
                 if client.is_enabled() {
-                    let librato_client =
-                        if let (Some(username), Some(token)) = (pieces.get(3), pieces.get(4)) {
-                            info!(username, "configuring librato client");
-                            Some(librato::Client::new(
-                                username.to_string(),
-                                token.to_string(),
-                                config.new_waitgroup_ticket(),
-                            ))
-                        } else {
-                            None
-                        };
+                    let librato_client = if let Some(&[username, token]) = pieces.get(3..=4) {
+                        info!(username, "configuring librato client");
+                        Some(librato::Client::new(
+                            username.to_string(),
+                            token.to_string(),
+                            config.new_waitgroup_ticket(),
+                        ))
+                    } else {
+                        None
+                    };
 
                     config.destinations.insert(
                         logplex_token.to_owned(),
