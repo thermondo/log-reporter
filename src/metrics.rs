@@ -167,7 +167,7 @@ pub(crate) fn generate_librato_scaling_metrics(
             kind: librato::Kind::Gauge,
             value: event.count as f64,
             source: event.proc.to_string(),
-            name: format!("dyno_count.{}", event.size),
+            name: format!("dyno_count.{}", event.size.to_lowercase()),
         });
         result.push(librato::Measurement {
             measure_time: *timestamp,
