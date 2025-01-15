@@ -64,8 +64,11 @@ pub(crate) async fn handle_logs(
     {
         let destination = destination.clone();
         let config = config.clone();
+        let runtime = tokio::runtime::Handle::current();
         let task_wait_ticket = config.new_waitgroup_ticket();
         rayon::spawn(move || {
+            let _guard = runtime.enter(); // so we can use tokio::spawn in this rayon task
+
             let body_text = match std::str::from_utf8(&body).context("invalid UTF-8 in body") {
                 Ok(body) => body,
                 Err(err) => {
