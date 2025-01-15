@@ -152,10 +152,12 @@ impl Config {
                 if client.is_enabled() {
                     let librato_client = if let Some(&[username, token]) = pieces.get(3..=4) {
                         info!(username, "configuring librato client");
+                        let runtime = tokio::runtime::Handle::current();
                         Some(librato::Client::new(
                             username.to_string(),
                             token.to_string(),
                             config.new_waitgroup_ticket(),
+                            runtime,
                             #[cfg(test)]
                             "invalid_endpoint",
                         ))
