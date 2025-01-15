@@ -80,7 +80,7 @@ impl Config {
                 // since we might have running background send-to-librato tasks.
                 // the shutdown itself won't generate new tasks, so we're fine here.
                 if let Err(err) = librato_client.shutdown().await {
-                    warn!(
+                    error!(
                         ?err,
                         librato_client.username, "error shutting down librato client"
                     );
