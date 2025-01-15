@@ -43,6 +43,9 @@ impl State {
     }
 }
 
+/// Librato client to send measurements to librato.
+/// collects metrics in an internal queue and regularly send them to librato
+/// in the background.
 #[derive(Debug)]
 pub(crate) struct Client {
     pub(crate) username: String,
