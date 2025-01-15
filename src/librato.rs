@@ -14,14 +14,14 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 #[cfg(not(test))]
 const DEFAULT_METRIC_ENDPOINT: &str = "https://metrics-api.librato.com/v1/metrics";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Kind {
     #[allow(dead_code)]
     Counter,
     Gauge,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Measurement {
     pub(crate) kind: Kind,
     pub(crate) measure_time: DateTime<FixedOffset>,

@@ -330,7 +330,10 @@ pub(crate) fn report_metrics<'a>(
 
 #[cfg(test)]
 mod tests {
+    use self::librato::{Kind, Measurement};
+
     use super::*;
+    use chrono::Local;
     use test_case::test_case;
 
     #[test_case(
@@ -500,6 +503,39 @@ mod tests {
                     value: MetricValue::Counter(1.0),
                     unit: MetricUnit::None,
                     tags: expected_tags.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_generate_librato_scaling_metrics() {
+        let ts = Local::now().fixed_offset();
+        let result = generate_librato_scaling_metrics(
+            &ts,
+            &[ScalingEvent {
+                proc: "web",
+                count: 99,
+                size: "huuuuge-2X",
+            }],
+        );
+
+        assert_eq!(
+            result,
+            vec![
+                Measurement {
+                    measure_time: ts,
+                    kind: Kind::Gauge,
+                    name: "dyno_count.huuuuge-2x".into(),
+                    value: 99.0,
+                    source: "web".into()
+                },
+                Measurement {
+                    measure_time: ts,
+                    kind: Kind::Gauge,
+                    name: "dyno_count".into(),
+                    value: 99.0,
+                    source: "web".into()
                 },
             ]
         );
