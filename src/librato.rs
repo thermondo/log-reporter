@@ -6,7 +6,6 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
-use tokio::runtime::Handle;
 use tracing::{debug, error};
 
 const MAX_MEASURE_MEASUREMENTS_PER_REQUEST: usize = 300; // max as per documentation
@@ -51,7 +50,6 @@ pub(crate) struct Client {
     #[cfg(test)]
     endpoint: String,
     inner: Mutex<State>,
-    runtime: Handle,
 }
 
 impl Client {
@@ -59,11 +57,9 @@ impl Client {
         username: impl Into<String>,
         token: impl Into<String>,
         waitgroup: Option<WaitGroup>,
-        runtime: Handle,
         #[cfg(test)] endpoint: impl Into<String>,
     ) -> Client {
         Self {
-            runtime,
             username: username.into(),
             token: token.into(),
             #[cfg(test)]
@@ -87,7 +83,7 @@ impl Client {
             || state.last_flush.elapsed() > FLUSH_INTERVAL
         {
             debug!(?state.queue, "triggering background flushing to librato");
-            self.runtime.spawn({
+            tokio::spawn({
                 let queue = state.queue.clone();
                 let username = self.username.clone();
                 let token = self.token.clone();
@@ -193,26 +189,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_shutdown() {
-        let client = Client::new(
-            "username",
-            "token",
-            None,
-            Handle::current(),
-            "invalid_endpoint",
-        );
+        let client = Client::new("username", "token", None, "invalid_endpoint");
 
         assert!(client.shutdown().await.is_ok());
     }
 
     #[tokio::test]
     async fn test_shutdown_fails_with_queued_measurements() {
-        let client = Client::new(
-            "username",
-            "token",
-            None,
-            Handle::current(),
-            "invalid_endpoint",
-        );
+        let client = Client::new("username", "token", None, "invalid_endpoint");
         client.add_measurement(Measurement {
             kind: Kind::Gauge,
             measure_time: chrono::Utc::now().into(),
@@ -249,7 +233,7 @@ mod tests {
             })
             .create();
 
-        let client = Client::new("username", "token", None, Handle::current(), server.url());
+        let client = Client::new("username", "token", None, server.url());
         client.add_measurement(Measurement {
             kind: Kind::Gauge,
             measure_time: timestamp.into(),
