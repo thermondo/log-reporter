@@ -241,7 +241,7 @@ impl Config {
 
         f(dest, Arc::new(self.clone())).await;
 
-        self.destinations.remove(&logplex_token.to_owned());
+        self.destinations.remove(logplex_token);
         test_transport
     }
 

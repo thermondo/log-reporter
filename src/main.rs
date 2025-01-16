@@ -1,5 +1,8 @@
 use crate::server::build_app;
 use anyhow::Result;
+use sentry::integrations::{
+    panic as sentry_panic, tower as sentry_tower, tracing as sentry_tracing,
+};
 use std::{
     borrow::Cow,
     net::{IpAddr, Ipv4Addr, SocketAddr},
