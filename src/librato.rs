@@ -52,7 +52,7 @@ pub(crate) struct Client {
     token: String,
     #[cfg(test)]
     endpoint: String,
-    inner: Mutex<State>,
+    state: Mutex<State>,
 }
 
 impl Client {
@@ -67,7 +67,7 @@ impl Client {
             token: token.into(),
             #[cfg(test)]
             endpoint: endpoint.into(),
-            inner: Mutex::new(State {
+            state: Mutex::new(State {
                 waitgroup,
                 queue: Vec::new(),
                 last_flush: Instant::now(),
@@ -79,7 +79,7 @@ impl Client {
     /// Will regularly flush the queue and send the measurements to librato
     /// in the background.
     pub(crate) fn add_measurement(&self, measurement: Measurement) {
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         state.queue.push(measurement);
 
         if state.queue.len() > MAX_MEASURE_MEASUREMENTS_PER_REQUEST
@@ -118,7 +118,7 @@ impl Client {
     pub(crate) async fn shutdown(&self) -> Result<()> {
         debug!("triggering shutdown of librato client");
         let queue = {
-            let mut state = self.inner.lock().unwrap();
+            let mut state = self.state.lock().unwrap();
             state.waitgroup.take();
             let queue = state.queue.to_vec();
             state.reset();
