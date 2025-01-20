@@ -1,4 +1,4 @@
-use crate::log_parser::OwnedScalingEvent;
+use crate::{librato, log_parser::OwnedScalingEvent};
 use anyhow::Result;
 use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
@@ -8,7 +8,7 @@ use std::{
     env,
     sync::{Arc, Mutex, RwLock},
 };
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 #[cfg(test)]
 use std::future::Future;
@@ -17,15 +17,21 @@ use std::future::Future;
 pub(crate) struct Destination {
     pub(crate) sentry_client: Arc<sentry::Client>,
 
+    pub(crate) librato_client: Option<librato::Client>,
+
     /// store the last seen scaling events so we can re-send them,
     /// assuming that the dyno counts don't change between scaling events.
     pub(crate) last_scaling_events: Mutex<Option<Vec<OwnedScalingEvent>>>,
 }
 
 impl Destination {
-    pub(crate) fn new(sentry_client: Arc<sentry::Client>) -> Self {
+    pub(crate) fn new(
+        sentry_client: Arc<sentry::Client>,
+        librato_client: Option<librato::Client>,
+    ) -> Self {
         Self {
             sentry_client,
+            librato_client,
             last_scaling_events: Mutex::new(None),
         }
     }
@@ -65,9 +71,24 @@ impl Config {
     /// will
     /// - wait for all running waitgroup tickets
     /// - shut down sentry clients
-    pub(crate) fn shutdown(&self) {
-        info!(?self.waitgroup, "waiting for pending tasks");
+    /// - send pending librato metrics
+    pub(crate) async fn shutdown(&self) {
+        info!("flushing librato metrics");
+        for destination in self.destinations.values() {
+            if let Some(librato_client) = &destination.librato_client {
+                // we have to do this before we wait for the waitgroups,
+                // since we might have running background send-to-librato tasks.
+                // the shutdown itself won't generate new tasks, so we're fine here.
+                if let Err(err) = librato_client.shutdown().await {
+                    error!(
+                        ?err,
+                        librato_client.username, "error shutting down librato client"
+                    );
+                };
+            }
+        }
 
+        info!(?self.waitgroup, "waiting for pending background tasks");
         if let Some(waitgroup) = self.waitgroup.write().unwrap().take() {
             waitgroup.wait();
         }
@@ -114,7 +135,11 @@ impl Config {
             }
 
             let pieces: Vec<_> = value.trim().split('|').collect();
-            if let [logplex_token, sentry_environment, sentry_dsn, ..] = pieces[..] {
+            if pieces.len() >= 3 {
+                let logplex_token = pieces[0];
+                let sentry_environment = pieces[1];
+                let sentry_dsn = pieces[2];
+
                 let client = sentry::Client::from((
                     sentry_dsn.to_owned(),
                     sentry::ClientOptions {
@@ -125,9 +150,22 @@ impl Config {
                     },
                 ));
                 if client.is_enabled() {
+                    let librato_client = if let Some(&[username, token]) = pieces.get(3..=4) {
+                        info!(username, "configuring librato client");
+                        Some(librato::Client::new(
+                            username.to_string(),
+                            token.to_string(),
+                            config.new_waitgroup_ticket(),
+                            #[cfg(test)]
+                            "invalid_endpoint",
+                        ))
+                    } else {
+                        None
+                    };
+
                     config.destinations.insert(
                         logplex_token.to_owned(),
-                        Arc::new(Destination::new(Arc::new(client))),
+                        Arc::new(Destination::new(Arc::new(client), librato_client)),
                     );
 
                     info!(
@@ -188,7 +226,7 @@ impl Config {
                 ..Default::default()
             },
         )));
-        let dest = Arc::new(Destination::new(client.clone()));
+        let dest = Arc::new(Destination::new(client.clone(), None));
         self.destinations
             .insert(logplex_token.to_owned(), dest.clone());
 

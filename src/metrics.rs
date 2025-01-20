@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::{DateTime, FixedOffset};
 use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case},
@@ -14,6 +15,7 @@ use tracing::{debug, warn};
 
 use crate::{
     config::Destination,
+    librato,
     log_parser::{LogMap, ScalingEvent},
 };
 
@@ -150,6 +152,33 @@ fn parse_metric_from_kv<'a>(key: &'a str, value: &'a str) -> Result<SentryMetric
     .map_err(nom::Err::<nom::error::Error<&str>>::to_owned)?;
 
     Ok(metric)
+}
+
+/// generate librato metrics from scaling events
+pub(crate) fn generate_librato_scaling_metrics(
+    timestamp: &DateTime<FixedOffset>,
+    events: &[ScalingEvent<'_>],
+) -> Vec<librato::Measurement> {
+    let mut result = Vec::with_capacity(events.len() * 2);
+
+    for event in events {
+        result.push(librato::Measurement {
+            measure_time: *timestamp,
+            kind: librato::Kind::Gauge,
+            value: event.count as f64,
+            source: event.proc.to_string(),
+            name: format!("dyno_count.{}", event.size.to_lowercase()),
+        });
+        result.push(librato::Measurement {
+            measure_time: *timestamp,
+            kind: librato::Kind::Gauge,
+            value: event.count as f64,
+            source: event.proc.to_string(),
+            name: "dyno_count".to_string(),
+        });
+    }
+
+    result
 }
 
 /// generate metrics from scaling events
@@ -301,7 +330,10 @@ pub(crate) fn report_metrics<'a>(
 
 #[cfg(test)]
 mod tests {
+    use self::librato::{Kind, Measurement};
+
     use super::*;
+    use chrono::Local;
     use test_case::test_case;
 
     #[test_case(
@@ -471,6 +503,39 @@ mod tests {
                     value: MetricValue::Counter(1.0),
                     unit: MetricUnit::None,
                     tags: expected_tags.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_generate_librato_scaling_metrics() {
+        let ts = Local::now().fixed_offset();
+        let result = generate_librato_scaling_metrics(
+            &ts,
+            &[ScalingEvent {
+                proc: "web",
+                count: 99,
+                size: "huuuuge-2X",
+            }],
+        );
+
+        assert_eq!(
+            result,
+            vec![
+                Measurement {
+                    measure_time: ts,
+                    kind: Kind::Gauge,
+                    name: "dyno_count.huuuuge-2x".into(),
+                    value: 99.0,
+                    source: "web".into()
+                },
+                Measurement {
+                    measure_time: ts,
+                    kind: Kind::Gauge,
+                    name: "dyno_count".into(),
+                    value: 99.0,
+                    source: "web".into()
                 },
             ]
         );

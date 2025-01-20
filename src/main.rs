@@ -17,6 +17,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 mod background;
 mod config;
 mod extractors;
+mod librato;
 mod log_parser;
 mod metrics;
 mod reporter;
@@ -79,7 +80,7 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
-    config.shutdown();
+    config.shutdown().await;
 
     Ok(())
 }
