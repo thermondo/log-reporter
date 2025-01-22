@@ -18,18 +18,21 @@ pub(crate) async fn resend_scaling_events(config: Arc<Config>) {
         for (_, destination) in config.destinations.iter() {
             let last_scaling_events = destination.last_scaling_events.lock().unwrap();
 
-            if let Some(events) = &*last_scaling_events {
-                let events: Vec<ScalingEvent<'_>> = events.iter().map(Into::into).collect();
+            let Some(events) = &*last_scaling_events else {
+                continue;
+            };
 
-                debug!("resending scaling metrics");
+            let Some(ref librato_client) = destination.librato_client else {
+                continue;
+            };
 
-                if let Some(ref librato_client) = destination.librato_client {
-                    for measurement in
-                        generate_librato_scaling_metrics(&Local::now().fixed_offset(), &events)
-                    {
-                        librato_client.add_measurement(measurement);
-                    }
-                }
+            let events: Vec<ScalingEvent<'_>> = events.iter().map(Into::into).collect();
+            debug!("resending scaling metrics");
+
+            for measurement in
+                generate_librato_scaling_metrics(&Local::now().fixed_offset(), &events)
+            {
+                librato_client.add_measurement(measurement);
             }
         }
     }
