@@ -130,56 +130,59 @@ impl Config {
             }
 
             let pieces: Vec<_> = value.trim().split('|').collect();
-            if pieces.len() >= 3 {
-                let logplex_token = pieces[0];
-                let sentry_environment = pieces[1];
-                let sentry_dsn = pieces[2];
-
-                let client = sentry::Client::from((
-                    sentry_dsn.to_owned(),
-                    sentry::ClientOptions {
-                        environment: Some(Cow::Owned(sentry_environment.to_owned())),
-                        transport: Some(Arc::new(DefaultTransportFactory)),
-                        debug: config.sentry_debug,
-                        ..Default::default()
-                    },
-                ));
-                if client.is_enabled() {
-                    let librato_client = if let Some(&[username, token]) = pieces.get(3..=4) {
-                        info!(username, "configuring librato client");
-                        Some(librato::Client::new(
-                            username.to_string(),
-                            token.to_string(),
-                            config.new_waitgroup_ticket(),
-                            #[cfg(test)]
-                            "invalid_endpoint",
-                        ))
-                    } else {
-                        None
-                    };
-
-                    config.destinations.insert(
-                        logplex_token.to_owned(),
-                        Arc::new(Destination::new(Arc::new(client), librato_client)),
-                    );
-
-                    info!(
-                        ?logplex_token,
-                        ?sentry_environment,
-                        ?sentry_dsn,
-                        "loaded logplex sentry mapping"
-                    );
-                } else {
-                    error!(
-                        ?logplex_token,
-                        ?sentry_environment,
-                        ?sentry_dsn,
-                        "sentry client is not enabled",
-                    );
-                }
-            } else {
-                error!(name, value, "wrong sentry mapping line format.")
+            if pieces.len() < 3 {
+                error!(name, value, "wrong sentry mapping line format.");
+                continue;
             }
+
+            let logplex_token = pieces[0];
+            let sentry_environment = pieces[1];
+            let sentry_dsn = pieces[2];
+
+            let client = sentry::Client::from((
+                sentry_dsn.to_owned(),
+                sentry::ClientOptions {
+                    environment: Some(Cow::Owned(sentry_environment.to_owned())),
+                    transport: Some(Arc::new(DefaultTransportFactory)),
+                    debug: config.sentry_debug,
+                    ..Default::default()
+                },
+            ));
+
+            if !client.is_enabled() {
+                error!(
+                    ?logplex_token,
+                    ?sentry_environment,
+                    ?sentry_dsn,
+                    "sentry client is not enabled",
+                );
+                continue;
+            }
+
+            let librato_client = if let Some(&[username, token]) = pieces.get(3..=4) {
+                info!(username, "configuring librato client");
+                Some(librato::Client::new(
+                    username.to_string(),
+                    token.to_string(),
+                    config.new_waitgroup_ticket(),
+                    #[cfg(test)]
+                    "invalid_endpoint",
+                ))
+            } else {
+                None
+            };
+
+            config.destinations.insert(
+                logplex_token.to_owned(),
+                Arc::new(Destination::new(Arc::new(client), librato_client)),
+            );
+
+            info!(
+                ?logplex_token,
+                ?sentry_environment,
+                ?sentry_dsn,
+                "loaded logplex sentry mapping"
+            );
         }
 
         Ok(config)
