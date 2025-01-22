@@ -42,7 +42,6 @@ pub(crate) struct Config {
     pub port: u16,
     pub sentry_dsn: Option<String>,
     pub sentry_debug: bool,
-    pub sentry_report_metrics: bool,
     pub sentry_traces_sample_rate: f32,
     pub destinations: HashMap<String, Arc<Destination>>,
     /// clone this waitgroup for anything that the app needs to wait
@@ -57,7 +56,6 @@ impl Default for Config {
             port: 3000,
             sentry_dsn: None,
             sentry_debug: false,
-            sentry_report_metrics: false,
             destinations: HashMap::new(),
             waitgroup: Arc::new(RwLock::new(Some(WaitGroup::new()))),
             sentry_traces_sample_rate: 0.0,
@@ -121,9 +119,6 @@ impl Config {
                 .parse::<f32>()
                 .unwrap_or(0.0),
             sentry_debug: env::var("SENTRY_DEBUG")
-                .map(|var| !var.is_empty())
-                .unwrap_or(false),
-            sentry_report_metrics: env::var("SENTRY_REPORT_METRICS")
                 .map(|var| !var.is_empty())
                 .unwrap_or(false),
             ..Default::default()
