@@ -82,8 +82,8 @@ impl Client {
         let mut state = self.state.lock().unwrap();
         state.queue.push(measurement);
 
-        if state.queue.len() < MAX_MEASURE_MEASUREMENTS_PER_REQUEST
-            && state.last_flush.elapsed() < FLUSH_INTERVAL
+        if state.queue.len() <= MAX_MEASURE_MEASUREMENTS_PER_REQUEST
+            && state.last_flush.elapsed() <= FLUSH_INTERVAL
         {
             return;
         }
