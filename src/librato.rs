@@ -82,36 +82,38 @@ impl Client {
         let mut state = self.state.lock().unwrap();
         state.queue.push(measurement);
 
-        if state.queue.len() > MAX_MEASURE_MEASUREMENTS_PER_REQUEST
-            || state.last_flush.elapsed() > FLUSH_INTERVAL
+        if state.queue.len() < MAX_MEASURE_MEASUREMENTS_PER_REQUEST
+            && state.last_flush.elapsed() < FLUSH_INTERVAL
         {
-            debug!(?state.queue, "triggering background flushing to librato");
-            tokio::spawn({
-                let queue = state.queue.clone();
-                let username = self.username.clone();
-                let token = self.token.clone();
-                #[cfg(test)]
-                let endpoint = self.endpoint.clone();
-                let waitgroup = state.waitgroup.clone();
-                async move {
-                    if let Err(err) = Client::send(
-                        &username,
-                        &token,
-                        #[cfg(test)]
-                        &endpoint,
-                        #[cfg(not(test))]
-                        DEFAULT_METRIC_ENDPOINT,
-                        &queue,
-                    )
-                    .await
-                    {
-                        error!(?err, username, ?queue, "error sending metrics to librato");
-                    }
-                    drop(waitgroup);
-                }
-            });
-            state.reset();
+            return;
         }
+
+        debug!(?state.queue, "triggering background flushing to librato");
+        tokio::spawn({
+            let queue = state.queue.clone();
+            let username = self.username.clone();
+            let token = self.token.clone();
+            #[cfg(test)]
+            let endpoint = self.endpoint.clone();
+            let waitgroup = state.waitgroup.clone();
+            async move {
+                if let Err(err) = Client::send(
+                    &username,
+                    &token,
+                    #[cfg(test)]
+                    &endpoint,
+                    #[cfg(not(test))]
+                    DEFAULT_METRIC_ENDPOINT,
+                    &queue,
+                )
+                .await
+                {
+                    error!(?err, username, ?queue, "error sending metrics to librato");
+                }
+                drop(waitgroup);
+            }
+        });
+        state.reset();
     }
 
     /// shut down the librato client, sending all pending events to librato.

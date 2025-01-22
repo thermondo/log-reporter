@@ -144,9 +144,7 @@ pub(crate) fn process_logs(destination: Arc<Destination>, input: &str) -> Result
 
             debug!(?map, "got router log");
 
-            let at = if let Some(at) = map.get("at") {
-                at
-            } else {
+            let Some(at) = map.get("at") else {
                 warn!(?line, "missing `at` in router log line");
                 continue;
             };
@@ -155,9 +153,7 @@ pub(crate) fn process_logs(destination: Arc<Destination>, input: &str) -> Result
                 continue;
             }
 
-            let code = if let Some(code) = map.get("code") {
-                code
-            } else {
+            let Some(code) = map.get("code") else {
                 warn!(?line, "missing `code` in router `error` log line");
                 continue;
             };
@@ -175,18 +171,22 @@ pub(crate) fn process_logs(destination: Arc<Destination>, input: &str) -> Result
             && log.source == "api"
             && destination.librato_client.is_some()
         {
-            if let Ok((_, (events, _user))) = parse_scaling_event(log.text) {
-                debug!("trying to report scaling metrics");
+            let Ok((_, (events, _user))) = parse_scaling_event(log.text) else {
+                continue;
+            };
 
-                // store the scaling events in a cache so we can regularly re-send them.
-                let mut last_events = destination.last_scaling_events.lock().unwrap();
-                *last_events = Some(events.iter().map(Into::into).collect());
+            let Some(ref librato_client) = destination.librato_client else {
+                continue;
+            };
 
-                if let Some(ref librato_client) = destination.librato_client {
-                    for measurement in generate_librato_scaling_metrics(&log.timestamp, &events) {
-                        librato_client.add_measurement(measurement);
-                    }
-                }
+            debug!("trying to report scaling metrics");
+
+            // store the scaling events in a cache so we can regularly re-send them.
+            let mut last_events = destination.last_scaling_events.lock().unwrap();
+            *last_events = Some(events.iter().map(Into::into).collect());
+
+            for measurement in generate_librato_scaling_metrics(&log.timestamp, &events) {
+                librato_client.add_measurement(measurement);
             }
         }
     }

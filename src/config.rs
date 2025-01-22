@@ -73,17 +73,19 @@ impl Config {
     pub(crate) async fn shutdown(&self) {
         info!("flushing librato metrics");
         for destination in self.destinations.values() {
-            if let Some(librato_client) = &destination.librato_client {
-                // we have to do this before we wait for the waitgroups,
-                // since we might have running background send-to-librato tasks.
-                // the shutdown itself won't generate new tasks, so we're fine here.
-                if let Err(err) = librato_client.shutdown().await {
-                    error!(
-                        ?err,
-                        librato_client.username, "error shutting down librato client"
-                    );
-                };
-            }
+            let Some(librato_client) = &destination.librato_client else {
+                continue;
+            };
+
+            // we have to do this before we wait for the waitgroups,
+            // since we might have running background send-to-librato tasks.
+            // the shutdown itself won't generate new tasks, so we're fine here.
+            if let Err(err) = librato_client.shutdown().await {
+                error!(
+                    ?err,
+                    librato_client.username, "error shutting down librato client"
+                );
+            };
         }
 
         info!(?self.waitgroup, "waiting for pending background tasks");
