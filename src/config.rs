@@ -1,4 +1,4 @@
-use crate::log_parser::OwnedScalingEvent;
+use crate::{librato, log_parser::OwnedScalingEvent};
 use anyhow::Result;
 use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
@@ -9,7 +9,7 @@ use std::{
     env,
     sync::{Arc, Mutex, RwLock},
 };
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 #[cfg(test)]
 use std::future::Future;
@@ -18,15 +18,21 @@ use std::future::Future;
 pub(crate) struct Destination {
     pub(crate) sentry_client: Arc<sentry::Client>,
 
+    pub(crate) librato_client: Option<librato::Client>,
+
     /// store the last seen scaling events so we can re-send them,
     /// assuming that the dyno counts don't change between scaling events.
     pub(crate) last_scaling_events: Mutex<Option<Vec<OwnedScalingEvent>>>,
 }
 
 impl Destination {
-    pub(crate) fn new(sentry_client: Arc<sentry::Client>) -> Self {
+    pub(crate) fn new(
+        sentry_client: Arc<sentry::Client>,
+        librato_client: Option<librato::Client>,
+    ) -> Self {
         Self {
             sentry_client,
+            librato_client,
             last_scaling_events: Mutex::new(None),
         }
     }
@@ -83,7 +89,6 @@ pub(crate) struct Config {
     pub port: u16,
     pub sentry_dsn: Option<String>,
     pub sentry_debug: bool,
-    pub sentry_report_metrics: bool,
     pub sentry_traces_sample_rate: f32,
     pub destinations: HashMap<String, Arc<Destination>>,
     /// clone this waitgroup for anything that the app needs to wait
@@ -98,7 +103,6 @@ impl Default for Config {
             port: 3000,
             sentry_dsn: None,
             sentry_debug: false,
-            sentry_report_metrics: false,
             destinations: HashMap::new(),
             waitgroup: Arc::new(RwLock::new(Some(WaitGroup::new()))),
             sentry_traces_sample_rate: 0.0,
@@ -112,9 +116,26 @@ impl Config {
     /// will
     /// - wait for all running waitgroup tickets
     /// - shut down sentry clients
-    pub(crate) fn shutdown(&self) {
-        info!(?self.waitgroup, "waiting for pending tasks");
+    /// - send pending librato metrics
+    pub(crate) async fn shutdown(&self) {
+        info!("flushing librato metrics");
+        for destination in self.destinations.values() {
+            let Some(librato_client) = &destination.librato_client else {
+                continue;
+            };
 
+            // we have to do this before we wait for the waitgroups,
+            // since we might have running background send-to-librato tasks.
+            // the shutdown itself won't generate new tasks, so we're fine here.
+            if let Err(err) = librato_client.shutdown().await {
+                error!(
+                    ?err,
+                    librato_client.username, "error shutting down librato client"
+                );
+            };
+        }
+
+        info!(?self.waitgroup, "waiting for pending background tasks");
         if let Some(waitgroup) = self.waitgroup.write().unwrap().take() {
             waitgroup.wait();
         }
@@ -149,9 +170,6 @@ impl Config {
             sentry_debug: env::var("SENTRY_DEBUG")
                 .map(|var| !var.is_empty())
                 .unwrap_or(false),
-            sentry_report_metrics: env::var("SENTRY_REPORT_METRICS")
-                .map(|var| !var.is_empty())
-                .unwrap_or(false),
             ..Default::default()
         };
 
@@ -161,39 +179,59 @@ impl Config {
             }
 
             let pieces: Vec<_> = value.trim().split('|').collect();
-            if let [logplex_token, sentry_environment, sentry_dsn, ..] = pieces[..] {
-                let client = sentry::Client::from((
-                    sentry_dsn.to_owned(),
-                    sentry::ClientOptions {
-                        environment: Some(Cow::Owned(sentry_environment.to_owned())),
-                        transport: Some(Arc::new(DefaultTransportFactory)),
-                        debug: config.sentry_debug,
-                        ..Default::default()
-                    },
-                ));
-                if client.is_enabled() {
-                    config.destinations.insert(
-                        logplex_token.to_owned(),
-                        Arc::new(Destination::new(Arc::new(client))),
-                    );
-
-                    info!(
-                        ?logplex_token,
-                        ?sentry_environment,
-                        ?sentry_dsn,
-                        "loaded logplex sentry mapping"
-                    );
-                } else {
-                    error!(
-                        ?logplex_token,
-                        ?sentry_environment,
-                        ?sentry_dsn,
-                        "sentry client is not enabled",
-                    );
-                }
-            } else {
-                error!(name, value, "wrong sentry mapping line format.")
+            if pieces.len() < 3 {
+                error!(name, value, "wrong sentry mapping line format.");
+                continue;
             }
+
+            let logplex_token = pieces[0];
+            let sentry_environment = pieces[1];
+            let sentry_dsn = pieces[2];
+
+            let client = sentry::Client::from((
+                sentry_dsn.to_owned(),
+                sentry::ClientOptions {
+                    environment: Some(Cow::Owned(sentry_environment.to_owned())),
+                    transport: Some(Arc::new(DefaultTransportFactory)),
+                    debug: config.sentry_debug,
+                    ..Default::default()
+                },
+            ));
+
+            if !client.is_enabled() {
+                error!(
+                    ?logplex_token,
+                    ?sentry_environment,
+                    ?sentry_dsn,
+                    "sentry client is not enabled",
+                );
+                continue;
+            }
+
+            let librato_client = if let Some(&[username, token]) = pieces.get(3..=4) {
+                info!(username, "configuring librato client");
+                Some(librato::Client::new(
+                    username.to_string(),
+                    token.to_string(),
+                    config.new_waitgroup_ticket(),
+                    #[cfg(test)]
+                    "invalid_endpoint",
+                ))
+            } else {
+                None
+            };
+
+            config.destinations.insert(
+                logplex_token.to_owned(),
+                Arc::new(Destination::new(Arc::new(client), librato_client)),
+            );
+
+            info!(
+                ?logplex_token,
+                ?sentry_environment,
+                ?sentry_dsn,
+                "loaded logplex sentry mapping"
+            );
         }
 
         Ok(config)
@@ -235,7 +273,7 @@ impl Config {
                 ..Default::default()
             },
         )));
-        let dest = Arc::new(Destination::new(client.clone()));
+        let dest = Arc::new(Destination::new(client.clone(), None));
         self.destinations
             .insert(logplex_token.to_owned(), dest.clone());
 

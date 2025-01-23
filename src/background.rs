@@ -1,14 +1,11 @@
-use crate::{
-    config::Config,
-    log_parser::ScalingEvent,
-    metrics::{generate_scaling_metrics, report_metrics},
-};
+use crate::{config::Config, log_parser::ScalingEvent, metrics::generate_librato_scaling_metrics};
+use chrono::Local;
 use std::{sync::Arc, time::Duration};
 use tokio::time::sleep;
 use tracing::debug;
 
-/// when sending scaling events to sentry as gauge,
-/// we have an issue where sentry would report the dyno count as
+/// when sending scaling events as gauge.
+/// we have an issue where metrics would report the dyno count as
 /// "not reported" or zero between scaling events.
 ///
 /// So we just store the last reported values and then regularly
@@ -21,15 +18,21 @@ pub(crate) async fn resend_scaling_events(config: Arc<Config>) {
         for (_, destination) in config.destinations.iter() {
             let last_scaling_events = destination.last_scaling_events.lock().unwrap();
 
-            if let Some(events) = &*last_scaling_events {
-                let events: Vec<ScalingEvent<'_>> = events.iter().map(Into::into).collect();
+            let Some(events) = &*last_scaling_events else {
+                continue;
+            };
 
-                debug!("resending scaling metrics");
+            let Some(ref librato_client) = destination.librato_client else {
+                continue;
+            };
 
-                report_metrics(
-                    destination,
-                    generate_scaling_metrics(&events, "thermondo_log_reporter"),
-                );
+            let events: Vec<ScalingEvent<'_>> = events.iter().map(Into::into).collect();
+            debug!("resending scaling metrics");
+
+            for measurement in
+                generate_librato_scaling_metrics(&Local::now().fixed_offset(), &events)
+            {
+                librato_client.add_measurement(measurement);
             }
         }
     }

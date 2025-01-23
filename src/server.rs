@@ -64,8 +64,11 @@ pub(crate) async fn handle_logs(
     {
         let destination = destination.clone();
         let config = config.clone();
+        let runtime = tokio::runtime::Handle::current();
         let task_wait_ticket = config.new_waitgroup_ticket();
         rayon::spawn(move || {
+            let _guard = runtime.enter(); // so we can use tokio::spawn in this rayon task
+
             let body_text = match std::str::from_utf8(&body).context("invalid UTF-8 in body") {
                 Ok(body) => body,
                 Err(err) => {
@@ -74,7 +77,7 @@ pub(crate) async fn handle_logs(
                 }
             };
 
-            if let Err(err) = process_logs(&config, destination, body_text) {
+            if let Err(err) = process_logs(destination, body_text) {
                 warn!("error processing logs: {:?}", err);
             }
             // we actually don't need the `drop` here,
@@ -232,7 +235,7 @@ mod tests {
             .await;
 
         // wait for async tasks to finish
-        config.shutdown();
+        config.shutdown().await;
 
         let events: Vec<sentry::protocol::Event<'static>> = test_sentry_transport
             .fetch_and_clear_envelopes()
