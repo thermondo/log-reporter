@@ -122,6 +122,7 @@ fn send_to_sentry(sentry_client: Arc<Client>, message: SentryMessage) {
 #[instrument(fields(dsn=?destination.sentry_client.dsn()), skip(destination))]
 pub(crate) fn process_logs(destination: Arc<Destination>, input: &str) -> Result<()> {
     let mut seen_sources: HashSet<&str> = HashSet::new();
+
     for line in input.lines() {
         debug!("handling log line: {}", line);
 
@@ -193,6 +194,8 @@ pub(crate) fn process_logs(destination: Arc<Destination>, input: &str) -> Result
             }
         }
     }
+
+    destination.update_scaling_event_from_seen_sources(seen_sources);
     Ok(())
 }
 
