@@ -5,8 +5,8 @@ use nom::{
     character::complete::{char, digit1, multispace0, multispace1, space0, space1, u16},
     combinator::{all_consuming, map, map_res, opt, recognize, rest, value, verify},
     multi::many1,
-    sequence::{delimited, preceded, tuple},
-    IResult,
+    sequence::{delimited, preceded},
+    IResult, Parser as _,
 };
 use std::collections::BTreeMap;
 use tracing::instrument;
@@ -30,11 +30,11 @@ pub(crate) type LogMap<'a> = BTreeMap<&'a str, &'a str>;
 #[instrument]
 pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {
     map(
-        tuple((
+        (
             preceded(multispace0, digit1),
             preceded(space1, delimited(tag("<"), digit1, tag(">"))),
             preceded(
-                tuple((digit1, space1)),
+                (digit1, space1),
                 map_res(take_till1(|c: char| c.is_whitespace()), |input: &str| {
                     DateTime::parse_from_rfc3339(input)
                 }),
@@ -48,15 +48,16 @@ pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {
                 )),
             ),
             preceded(space1, take_till1(|c: char| c.is_whitespace())),
-            preceded(tuple((space1, tag("-"), space0)), rest),
-        )),
+            preceded((space1, tag("-"), space0), rest),
+        ),
         |(_, _, timestamp, _, kind, source, text)| LogLine {
             timestamp,
             source,
             kind,
             text,
         },
-    )(input)
+    )
+    .parse(input)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,14 +99,15 @@ impl<'a> From<&ScalingEvent<'a>> for OwnedScalingEvent {
 ///     Scaled to web@4:Standard-1X worker@3:Standard-2X by user heroku.hirefire.api@thermondo.de
 pub(crate) fn parse_scaling_event(input: &str) -> IResult<&str, (Vec<ScalingEvent>, &str)> {
     map(
-        tuple((
+        (
             preceded(multispace0, tag("Scaled to")),
             many1(preceded(multispace1, parse_single_scaling_event)),
             preceded(multispace1, tag("by user")),
             preceded(multispace1, rest),
-        )),
+        ),
         |(_, events, _, user)| (events, user),
-    )(input)
+    )
+    .parse(input)
 }
 
 /// parses single scaling element
@@ -113,15 +115,16 @@ pub(crate) fn parse_scaling_event(input: &str) -> IResult<&str, (Vec<ScalingEven
 ///     web@4:Standard-1X
 fn parse_single_scaling_event(input: &str) -> IResult<&str, ScalingEvent> {
     map(
-        tuple((
+        (
             take_till1(|c: char| c == '@'),
             tag("@"),
             u16,
             tag(":"),
             take_till1(|c: char| c.is_whitespace()),
-        )),
+        ),
         |(proc, _, count, _, size)| ScalingEvent { proc, count, size },
-    )(input)
+    )
+    .parse(input)
 }
 
 /// parses dyno log messages
@@ -131,17 +134,18 @@ fn parse_single_scaling_event(input: &str) -> IResult<&str, ScalingEvent> {
 /// see https://devcenter.heroku.com/articles/error-codes#r10-boot-timeout
 pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, (&str, &str)> {
     map(
-        tuple((
+        (
             preceded(multispace0, tag("Error")),
             preceded(space1, take_till1(|c: char| c.is_whitespace())),
             preceded(
                 space1,
                 delimited(char('('), take_till1(|c: char| c == ')'), char(')')),
             ),
-            opt(tuple((space1, tag("->"), rest))),
-        )),
+            opt((space1, tag("->"), rest)),
+        ),
         |(_tag, code, name, _arrow)| (code, name),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, LogMap> {
@@ -149,20 +153,21 @@ pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, LogMap> {
         many1(map(
             delimited(
                 space0,
-                tuple((
+                (
                     take_while1(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '#'),
                     tag("="),
                     alt((
                         delimited(tag("\""), take_till1(|c: char| c == '"'), tag("\"")),
                         take_till1(|c: char| c.is_whitespace()),
                     )),
-                )),
+                ),
                 space0,
             ),
             |(key, _, value): (&str, &str, &str)| (key, value),
         )),
         |pairs| pairs.into_iter().collect(),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(crate) fn parse_sfid(input: &str) -> IResult<&str, &str> {
@@ -182,12 +187,13 @@ pub(crate) fn parse_sfid(input: &str) -> IResult<&str, &str> {
             !(sfid.chars().all(|ch| ch.is_ascii_lowercase())
                 || sfid.chars().all(|ch| ch.is_ascii_uppercase()))
         },
-    )(input)
+    )
+    .parse(input)
 }
 
 /// parse a thermondo project reference
 pub(crate) fn parse_project_reference(input: &str) -> IResult<&str, &str> {
-    recognize(all_consuming(tuple((
+    recognize(all_consuming((
         // the prefix.
         take_while_m_n(2, 2, |ch: char| ch.is_ascii_uppercase()),
         // the year
@@ -196,27 +202,30 @@ pub(crate) fn parse_project_reference(input: &str) -> IResult<&str, &str> {
         take_while_m_n(4, 4, |ch: char| {
             ch.is_ascii_uppercase() || ch.is_ascii_digit()
         }),
-    ))))(input)
+    )))
+    .parse(input)
 }
 
 pub(crate) fn parse_partial_offer_number(input: &str) -> IResult<&str, &str> {
-    recognize(tuple((
+    recognize((
         take_while1(|ch: char| ch.is_ascii_digit()),
         tag("-"),
         take_while1(|ch: char| ch.is_ascii_digit()),
-    )))(input)
+    ))
+    .parse(input)
 }
 
 pub(crate) fn parse_offer_number(input: &str) -> IResult<&str, &str> {
-    recognize(all_consuming(parse_partial_offer_number))(input)
+    recognize(all_consuming(parse_partial_offer_number)).parse(input)
 }
 
 pub(crate) fn parse_offer_extension_number(input: &str) -> IResult<&str, &str> {
-    recognize(all_consuming(tuple((
+    recognize(all_consuming((
         parse_partial_offer_number,
         tag("-"),
         take_while1(|ch: char| ch.is_ascii_uppercase()),
-    ))))(input)
+    )))
+    .parse(input)
 }
 
 #[cfg(test)]
