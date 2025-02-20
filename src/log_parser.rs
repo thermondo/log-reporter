@@ -39,18 +39,33 @@ pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {
                     DateTime::parse_from_rfc3339(input)
                 }),
             ),
-            preceded(space1, tag("host")),
-            preceded(
-                space1,
-                alt((
-                    value(Kind::Heroku, tag("heroku")),
-                    value(Kind::App, tag("app")),
-                )),
-            ),
-            preceded(space1, take_till1(|c: char| c.is_whitespace())),
-            preceded((space1, tag("-"), space0), rest),
+            alt((
+                (
+                    // heroku v2 format, for now only used in router 2.0 logs
+                    space1,
+                    alt((
+                        value(Kind::Heroku, tag("heroku")),
+                        value(Kind::App, tag("app")),
+                    )),
+                    delimited(tag("["), take_till1(|c: char| c == ']'), tag("]:")),
+                    preceded(space1, rest),
+                ),
+                (
+                    // old heroku format, used in most lines
+                    preceded(space1, tag("host")),
+                    preceded(
+                        space1,
+                        alt((
+                            value(Kind::Heroku, tag("heroku")),
+                            value(Kind::App, tag("app")),
+                        )),
+                    ),
+                    preceded(space1, take_till1(|c: char| c.is_whitespace())),
+                    preceded((space1, tag("-"), space0), rest),
+                ),
+            )),
         ),
-        |(_, _, timestamp, _, kind, source, text)| LogLine {
+        |(_, _, timestamp, (_, kind, source, text))| LogLine {
             timestamp,
             source,
             kind,
@@ -317,6 +332,28 @@ mod tests {
     fn test_parse_project_reference_invalid(input: &str) {
         let result = parse_sfid(input);
         assert!(result.is_err(), "{:?}", result);
+    }
+
+    #[test]
+    fn test_full_router_line_info_v2() {
+        let input: &str = "\
+            111 <158>1 2024-04-26T16:58:32.943253+00:00 heroku[router]: \
+            at=info method=GET path=\"/\" host=my-app.example.com \
+            request_id=6903a168-b79b-ec27-03c8-b8f64d8d8792 \
+            fwd=138.68.186.89 dyno=web.1 connect=0ms service=0ms \
+            status=200 bytes=0 protocol=http2.0 tls=true tls_version=tls1.3\
+            ";
+
+        let (remainder, result) = parse_log_line(input).expect("parse error");
+        assert!(remainder.is_empty());
+        assert_eq!(
+            result,
+            LogLine {
+                timestamp: DateTime::parse_from_rfc3339("2024-04-26T16:58:32.943253+00:00").unwrap(),
+                kind: Kind::Heroku,
+                source: "router",
+                text: "at=info method=GET path=\"/\" host=my-app.example.com request_id=6903a168-b79b-ec27-03c8-b8f64d8d8792 fwd=138.68.186.89 dyno=web.1 connect=0ms service=0ms status=200 bytes=0 protocol=http2.0 tls=true tls_version=tls1.3", 
+            });
     }
 
     #[test]
