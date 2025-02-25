@@ -1,12 +1,12 @@
 use crate::{config::Config, extractors::LogplexDrainToken, reporter::process_logs};
 use anyhow::Context as _;
 use axum::{
+    Router,
     body::{self, Body},
     extract::State,
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Router,
 };
 use axum_extra::TypedHeader;
 use std::sync::Arc;

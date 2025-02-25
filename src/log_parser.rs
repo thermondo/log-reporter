@@ -1,12 +1,12 @@
 use chrono::{DateTime, FixedOffset};
 use nom::{
+    IResult, Parser as _,
     branch::alt,
-    bytes::complete::{tag, take_till1, take_while1, take_while_m_n},
+    bytes::complete::{tag, take_till1, take_while_m_n, take_while1},
     character::complete::{char, digit1, multispace0, multispace1, space0, space1, u16},
     combinator::{all_consuming, map, map_res, opt, recognize, rest, value, verify},
     multi::many1,
     sequence::{delimited, preceded},
-    IResult, Parser as _,
 };
 use std::collections::BTreeMap;
 use tracing::instrument;
@@ -349,11 +349,13 @@ mod tests {
         assert_eq!(
             result,
             LogLine {
-                timestamp: DateTime::parse_from_rfc3339("2024-04-26T16:58:32.943253+00:00").unwrap(),
+                timestamp: DateTime::parse_from_rfc3339("2024-04-26T16:58:32.943253+00:00")
+                    .unwrap(),
                 kind: Kind::Heroku,
                 source: "router",
-                text: "at=info method=GET path=\"/\" host=my-app.example.com request_id=6903a168-b79b-ec27-03c8-b8f64d8d8792 fwd=138.68.186.89 dyno=web.1 connect=0ms service=0ms status=200 bytes=0 protocol=http2.0 tls=true tls_version=tls1.3", 
-            });
+                text: "at=info method=GET path=\"/\" host=my-app.example.com request_id=6903a168-b79b-ec27-03c8-b8f64d8d8792 fwd=138.68.186.89 dyno=web.1 connect=0ms service=0ms status=200 bytes=0 protocol=http2.0 tls=true tls_version=tls1.3",
+            }
+        );
     }
 
     #[test]
@@ -372,11 +374,13 @@ mod tests {
         assert_eq!(
             result,
             LogLine {
-                timestamp: DateTime::parse_from_rfc3339("2022-12-05T08:59:21.850424+00:00").unwrap(),
+                timestamp: DateTime::parse_from_rfc3339("2022-12-05T08:59:21.850424+00:00")
+                    .unwrap(),
                 kind: Kind::Heroku,
                 source: "router",
                 text: "at=info method=GET path=\"/api/disposition/service/?hub=33\" host=thermondo-backend.herokuapp.com request_id=60fbbe6e-0ea5-4013-ab6a-9d6851fe1c95 fwd=\"80.187.107.115,167.82.231.29\" dyno=web.10 connect=2ms service=864ms status=200 bytes=15055 protocol=https"
-            });
+            }
+        );
     }
 
     #[test]
@@ -398,7 +402,8 @@ mod tests {
                 kind: Kind::App,
                 source: "web.15",
                 text: "[r9673 d8512f2b] INFO     [292844f1-49fe-445b-87b3-af87088b7df8] log_request_id.middleware: method=GET path=/api/disposition/foundation/ status=200 user=875",
-            });
+            }
+        );
     }
 
     #[test]
@@ -413,11 +418,13 @@ mod tests {
         assert_eq!(
             result,
             LogLine {
-                timestamp: DateTime::parse_from_rfc3339("2023-04-29T23:11:12.604871+00:00").unwrap(),
+                timestamp: DateTime::parse_from_rfc3339("2023-04-29T23:11:12.604871+00:00")
+                    .unwrap(),
                 kind: Kind::Heroku,
                 source: "web.1",
                 text: "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch",
-            });
+            }
+        );
     }
 
     #[test]
@@ -569,7 +576,11 @@ mod tests {
         );
     }
 
-    #[test_case("R10", "Boot timeout", "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch")]
+    #[test_case(
+        "R10",
+        "Boot timeout",
+        "Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch"
+    )]
     #[test_case(
         "R12",
         "Exit timeout",
@@ -586,8 +597,16 @@ mod tests {
         "Memory quota vastly exceeded",
         "Error R15 (Memory quota vastly exceeded)"
     )]
-    #[test_case("R16", "Detached", "Error R16 (Detached) -> An attached process is not responding to SIGHUP after its external connection was closed.")]
-    #[test_case("R17", "Checksum error", "Error R17 (Checksum error) -> Checksum does match expected value. Expected: SHA256:ed5718e83475c780145609cbb2e4f77ec8076f6f59ebc8a916fb790fbdb1ae64 Actual: SHA256:9ca15af16e06625dfd123ebc3472afb0c5091645512b31ac3dd355f0d8cc42c1")]
+    #[test_case(
+        "R16",
+        "Detached",
+        "Error R16 (Detached) -> An attached process is not responding to SIGHUP after its external connection was closed."
+    )]
+    #[test_case(
+        "R17",
+        "Checksum error",
+        "Error R17 (Checksum error) -> Checksum does match expected value. Expected: SHA256:ed5718e83475c780145609cbb2e4f77ec8076f6f59ebc8a916fb790fbdb1ae64 Actual: SHA256:9ca15af16e06625dfd123ebc3472afb0c5091645512b31ac3dd355f0d8cc42c1"
+    )]
     fn test_extract_dyno_error(expected_code: &str, expected_name: &str, line: &str) {
         let (remainder, (code, name)) = parse_dyno_error_code(line).expect("parse error");
         assert!(remainder.is_empty(), "rest: {}", remainder);

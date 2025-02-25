@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use chrono::{DateTime, FixedOffset};
 use crossbeam_utils::sync::WaitGroup;
 use serde_json::json;
