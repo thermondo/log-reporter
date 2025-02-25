@@ -1,9 +1,9 @@
 use crate::{
     config::Destination,
     log_parser::{
-        parse_dyno_error_code, parse_key_value_pairs, parse_log_line, parse_offer_extension_number,
-        parse_offer_number, parse_project_reference, parse_scaling_event, parse_sfid, Kind,
-        LogLine, LogMap,
+        Kind, LogLine, LogMap, parse_dyno_error_code, parse_key_value_pairs, parse_log_line,
+        parse_offer_extension_number, parse_offer_number, parse_project_reference,
+        parse_scaling_event, parse_sfid,
     },
     metrics::generate_librato_scaling_metrics,
 };

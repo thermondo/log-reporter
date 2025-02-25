@@ -12,7 +12,7 @@ use tokio::{net::TcpListener, signal};
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tracing::{info, instrument};
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 mod background;
 mod config;
