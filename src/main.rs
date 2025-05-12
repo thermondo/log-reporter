@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
             .layer(sentry_tower::NewSentryLayer::new_from_top())
-            .layer(sentry_tower::SentryHttpLayer::with_transaction()),
+            .layer(sentry_tower::SentryHttpLayer::new().enable_transaction()),
     );
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
