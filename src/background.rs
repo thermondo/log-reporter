@@ -1,4 +1,8 @@
-use crate::{config::Config, log_parser::ScalingEvent, metrics::generate_librato_scaling_metrics};
+use crate::{
+    config::Config,
+    log_parser::ScalingEvent,
+    metrics::{generate_graphite_scaling_metrics, generate_librato_scaling_metrics},
+};
 use chrono::Local;
 use std::{sync::Arc, time::Duration};
 use tokio::time::sleep;
@@ -22,17 +26,23 @@ pub(crate) async fn resend_scaling_events(config: Arc<Config>) {
                 continue;
             };
 
-            let Some(ref librato_client) = destination.librato_client else {
-                continue;
-            };
-
             let events: Vec<ScalingEvent<'_>> = events.iter().map(Into::into).collect();
             debug!("resending scaling metrics");
 
-            for measurement in
-                generate_librato_scaling_metrics(&Local::now().fixed_offset(), &events)
-            {
-                librato_client.add_measurement(measurement);
+            if let Some(ref librato_client) = destination.librato_client {
+                for measurement in
+                    generate_librato_scaling_metrics(&Local::now().fixed_offset(), &events)
+                {
+                    librato_client.add_measurement(measurement);
+                }
+            }
+
+            if let Some(ref graphite_client) = destination.graphite_client {
+                for measurement in
+                    generate_graphite_scaling_metrics(&Local::now().fixed_offset(), &events)
+                {
+                    graphite_client.add_measurement(measurement);
+                }
             }
         }
     }
