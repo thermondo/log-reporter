@@ -1,4 +1,4 @@
-use crate::{librato, log_parser::OwnedScalingEvent};
+use crate::{graphite, librato, log_parser::OwnedScalingEvent};
 use anyhow::Result;
 use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
@@ -18,6 +18,7 @@ pub(crate) struct Destination {
     pub(crate) sentry_client: Arc<sentry::Client>,
 
     pub(crate) librato_client: Option<librato::Client>,
+    pub(crate) graphite_client: Option<graphite::Client>,
 
     /// store the last seen scaling events so we can re-send them,
     /// assuming that the dyno counts don't change between scaling events.
@@ -28,10 +29,12 @@ impl Destination {
     pub(crate) fn new(
         sentry_client: Arc<sentry::Client>,
         librato_client: Option<librato::Client>,
+        graphite_client: Option<graphite::Client>,
     ) -> Self {
         Self {
             sentry_client,
             librato_client,
+            graphite_client,
             last_scaling_events: Mutex::new(None),
         }
     }
@@ -73,19 +76,23 @@ impl Config {
     pub(crate) async fn shutdown(&self) {
         info!("flushing librato metrics");
         for destination in self.destinations.values() {
-            let Some(librato_client) = &destination.librato_client else {
-                continue;
-            };
-
             // we have to do this before we wait for the waitgroups,
             // since we might have running background send-to-librato tasks.
             // the shutdown itself won't generate new tasks, so we're fine here.
-            if let Err(err) = librato_client.shutdown().await {
-                error!(
-                    ?err,
-                    librato_client.username, "error shutting down librato client"
-                );
-            };
+
+            if let Some(graphite_client) = &destination.graphite_client {
+                if let Err(err) = graphite_client.shutdown().await {
+                    error!(?err, "error shutting down graphite client ");
+                };
+            }
+            if let Some(librato_client) = &destination.librato_client {
+                if let Err(err) = librato_client.shutdown().await {
+                    error!(
+                        ?err,
+                        librato_client.username, "error shutting down librato client"
+                    );
+                };
+            }
         }
 
         info!(?self.waitgroup, "waiting for pending background tasks");
@@ -174,9 +181,23 @@ impl Config {
                 None
             };
 
+            let graphite_client = if let Some(&api_key) = pieces.get(5) {
+                info!("configuring graphite client");
+                Some(graphite::Client::new(
+                    api_key.to_string(),
+                    config.new_waitgroup_ticket(),
+                ))
+            } else {
+                None
+            };
+
             config.destinations.insert(
                 logplex_token.to_owned(),
-                Arc::new(Destination::new(Arc::new(client), librato_client)),
+                Arc::new(Destination::new(
+                    Arc::new(client),
+                    librato_client,
+                    graphite_client,
+                )),
             );
 
             info!(

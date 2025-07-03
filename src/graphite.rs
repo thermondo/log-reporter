@@ -11,7 +11,7 @@ use tokio::net::UdpSocket;
 
 use tracing::{debug, error};
 
-const MAX_MEASURE_BYTES_PER_REQUEST: usize = 8192; // max UDP packet size
+const MAX_BYTES_PER_UDP_REQUEST: usize = 8192; // max UDP packet size
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,12 +127,12 @@ impl Client {
 
         socket.connect(target_addr).await?;
 
-        let mut buf: Vec<u8> = Vec::with_capacity(MAX_MEASURE_BYTES_PER_REQUEST);
+        let mut buf: Vec<u8> = Vec::with_capacity(MAX_BYTES_PER_UDP_REQUEST);
 
         for m in measurements {
             let next = format!("{}.{}\n", api_key.as_ref(), m);
 
-            if buf.len() + next.len() > MAX_MEASURE_BYTES_PER_REQUEST {
+            if buf.len() + next.len() > MAX_BYTES_PER_UDP_REQUEST {
                 socket
                     .send(&buf)
                     .await
