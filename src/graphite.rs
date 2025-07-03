@@ -8,6 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::net::UdpSocket;
+use tokio_rustls::rustls::RootCertStore;
+use webpki_roots::TLS_SERVER_ROOTS;
 
 use tracing::{debug, error};
 
@@ -119,6 +121,14 @@ impl Client {
         debug!("sending metrics to graphite");
 
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
+        let mut roots = RootCertStore::empty();
+        roots.add_server_trust_anchors(TLS_SERVER_ROOTS.iter().map(|ta| {
+            OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject,
+                ta.spki,
+                ta.name_constraints,
+            )
+        }));
 
         let target_addr = ("carbon.hostedgraphite.com", 2003)
             .to_socket_addrs()?
