@@ -263,7 +263,7 @@ mod tests {
     #[test_case("123456-"; "missing offer number")]
     fn test_parse_offer_id_invalid(input: &str) {
         let result = parse_offer_number(input);
-        assert!(result.is_err(), "{:?}", result);
+        assert!(result.is_err(), "{result:?}");
     }
 
     #[test_case("0608656-04-A")]
@@ -271,7 +271,7 @@ mod tests {
     #[test_case("0608656123123123123-04123123123123-ABASLFKAJSLKJDAS")]
     fn test_parse_offer_extension_id(input: &str) {
         let result = parse_offer_extension_number(input);
-        assert!(result.is_ok(), "{:?}", result);
+        assert!(result.is_ok(), "{result:?}");
         let (remainder, result) = result.expect("parse error");
         assert!(remainder.is_empty(), "{}", remainder);
         assert_eq!(result, input);
@@ -282,7 +282,7 @@ mod tests {
     #[test_case("0608656-04-1"; "number in extension counter")]
     fn test_parse_offer_extension_id_invalid(input: &str) {
         let result = parse_offer_extension_number(input);
-        assert!(result.is_err(), "{:?}", result);
+        assert!(result.is_err(), "{result:?}");
     }
 
     #[test_case("0WO1i000003COEnGAO"; "18 digit id")]
@@ -313,7 +313,7 @@ mod tests {
     #[test_case(""; "empty string")]
     fn test_parse_sfid_invalid(input: &str) {
         let result = parse_sfid(input);
-        assert!(result.is_err(), "{:?}", result);
+        assert!(result.is_err(), "{result:?}");
     }
 
     #[test_case("WO220VLD")]
@@ -331,7 +331,7 @@ mod tests {
     #[test_case("BV221c02"; "lower case letter in counter")]
     fn test_parse_project_reference_invalid(input: &str) {
         let result = parse_sfid(input);
-        assert!(result.is_err(), "{:?}", result);
+        assert!(result.is_err(), "{result:?}");
     }
 
     #[test]
@@ -506,7 +506,7 @@ mod tests {
             ";
 
         let (remainder, result) = parse_key_value_pairs(input).expect("parse error");
-        assert!(remainder.is_empty(), "rest: {}", remainder);
+        assert!(remainder.is_empty(), "rest: {remainder}");
 
         assert_eq!(
             result,
@@ -561,7 +561,7 @@ mod tests {
         let input: &str = "source=web.1 dyno=heroku.145151706.12daf639-fefc-4fba-9c12-d0f27c0a4604 sample#memory_total=184.68MB sample#memory_rss=158.27MB";
 
         let (remainder, result) = parse_key_value_pairs(input).expect("parse error");
-        assert!(remainder.is_empty(), "rest: {}", remainder);
+        assert!(remainder.is_empty(), "rest: {remainder}");
         assert_eq!(
             result,
             LogMap::from_iter([
@@ -609,7 +609,7 @@ mod tests {
     )]
     fn test_extract_dyno_error(expected_code: &str, expected_name: &str, line: &str) {
         let (remainder, (code, name)) = parse_dyno_error_code(line).expect("parse error");
-        assert!(remainder.is_empty(), "rest: {}", remainder);
+        assert!(remainder.is_empty(), "rest: {remainder}");
         assert_eq!(code, expected_code);
         assert_eq!(name, expected_name);
     }
@@ -646,7 +646,7 @@ mod tests {
         line: &str,
     ) {
         let (remainder, (events, user)) = parse_scaling_event(line).expect("parse error");
-        assert!(remainder.is_empty(), "rest: {}", remainder);
+        assert!(remainder.is_empty(), "rest: {remainder}");
         assert_eq!(user, expected_user);
         assert_eq!(events, expected_events);
     }

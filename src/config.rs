@@ -247,7 +247,7 @@ impl Config {
                 ..Default::default()
             },
         )));
-        let dest = Arc::new(Destination::new(client.clone(), None));
+        let dest = Arc::new(Destination::new(client.clone(), None, None));
         self.destinations
             .insert(logplex_token.to_owned(), dest.clone());
 

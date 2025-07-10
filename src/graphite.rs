@@ -1,19 +1,19 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use chrono::{DateTime, FixedOffset};
 use crossbeam_utils::sync::WaitGroup;
+use rustls::pki_types::ServerName;
 use std::{
     fmt::Display,
+    io,
     net::ToSocketAddrs,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::net::UdpSocket;
-use tokio_rustls::rustls::RootCertStore;
-use webpki_roots::TLS_SERVER_ROOTS;
+use tokio::{io::AsyncWriteExt as _, net::TcpStream};
+use tokio_rustls::TlsConnector;
 
 use tracing::{debug, error};
 
-const MAX_BYTES_PER_UDP_REQUEST: usize = 8192; // max UDP packet size
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -120,46 +120,34 @@ impl Client {
     ) -> Result<()> {
         debug!("sending metrics to graphite");
 
-        let socket = UdpSocket::bind("0.0.0.0:0").await?;
-        let mut roots = RootCertStore::empty();
-        roots.add_server_trust_anchors(TLS_SERVER_ROOTS.iter().map(|ta| {
-            OwnedTrustAnchor::from_subject_spki_name_constraints(
-                ta.subject,
-                ta.spki,
-                ta.name_constraints,
-            )
-        }));
+        let host = "carbon.hostedgraphite.com";
 
-        let target_addr = ("carbon.hostedgraphite.com", 2003)
+        let addr = (host, 20030)
             .to_socket_addrs()?
             .next()
-            .ok_or_else(|| anyhow!("could not resolve carbon.hostedgraphite.com"))?;
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
 
-        socket.connect(target_addr).await?;
+        let mut root_cert_store = rustls::RootCertStore::empty();
+        root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
-        let mut buf: Vec<u8> = Vec::with_capacity(MAX_BYTES_PER_UDP_REQUEST);
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth();
+
+        let connector = TlsConnector::from(Arc::new(config));
+
+        let stream = TcpStream::connect(&addr).await?;
+
+        let domain = ServerName::try_from(host)?;
+        let mut stream = connector.connect(domain, stream).await?;
+
+        let mut buf: Vec<u8> = Vec::with_capacity(measurements.len() * 64);
 
         for m in measurements {
-            let next = format!("{}.{}\n", api_key.as_ref(), m);
-
-            if buf.len() + next.len() > MAX_BYTES_PER_UDP_REQUEST {
-                socket
-                    .send(&buf)
-                    .await
-                    .map_err(|e| anyhow!("failed to send measurement: {:?}", e))?;
-
-                buf.clear();
-            }
-
             buf.extend_from_slice(format!("{}.{}\n", api_key.as_ref(), m).as_bytes());
         }
 
-        if !buf.is_empty() {
-            socket
-                .send(&buf)
-                .await
-                .map_err(|e| anyhow!("failed to send measurements: {:?}", e))?;
-        }
+        stream.write_all(&buf).await?;
 
         Ok(())
     }

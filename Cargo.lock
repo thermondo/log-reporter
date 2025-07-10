@@ -1305,6 +1305,7 @@ dependencies = [
  "nom 8.0.0",
  "rayon",
  "reqwest",
+ "rustls",
  "sentry",
  "serde_json",
  "test-case",
