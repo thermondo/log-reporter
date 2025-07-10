@@ -36,23 +36,23 @@ impl MockTcpServer {
             let data = data.clone();
             async move {
                 loop {
-                    tokio::select! {
-                        _ = cancel_token.cancelled() => break,
-                        socket = listener.accept() => match socket {
-                            Ok((mut socket, _)) => {
-                                let mut buf = [0u8; 1024];
-                                loop {
-                                    match socket.read(&mut buf).await {
-                                        Ok(0) => break,
-                                        Ok(n) => {
-                                            data.lock().unwrap().extend_from_slice(&buf[..n]);
-                                        }
-                                        Err(_) => break,
+                    match listener.accept().await {
+                        Ok((mut socket, _)) => {
+                            let mut buf = [0u8; 1024];
+                            loop {
+                                match socket.read(&mut buf).await {
+                                    Ok(0) => break,
+                                    Ok(n) => {
+                                        data.lock().unwrap().extend_from_slice(&buf[..n]);
                                     }
+                                    Err(_) => break,
                                 }
                             }
-                            Err(_) => continue,
                         }
+                        Err(_) => continue,
+                    }
+                    if cancel_token.is_cancelled() {
+                        break;
                     }
                 }
             }
@@ -82,7 +82,6 @@ impl MockTcpServer {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
 
     use super::*;
     use tokio::io::AsyncWriteExt;
@@ -94,7 +93,6 @@ mod tests {
         for _ in 0..3 {
             let mut stream = TcpStream::connect(server.addr()).await.unwrap();
             stream.write_all(b"ping!").await.unwrap();
-            stream.
             // drop to trigger EOF
             drop(stream);
         }
