@@ -1322,6 +1322,7 @@ dependencies = [
  "test-case",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tracing",

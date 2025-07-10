@@ -157,28 +157,26 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
+    use super::*;
 
-    // #[tokio::test]
-    // async fn test_empty_shutdown() {
-    //     let client = Client::new("username", "token", None, "invalid_endpoint");
+    #[tokio::test]
+    async fn test_empty_shutdown() {
+        let client = Client::new("api-token", None);
 
-    //     assert!(client.shutdown().await.is_ok());
-    // }
+        assert!(client.shutdown().await.is_ok());
+    }
 
-    // #[tokio::test]
-    // async fn test_shutdown_fails_with_queued_measurements() {
-    //     let client = Client::new("username", "token", None, "invalid_endpoint");
-    //     client.add_measurement(Measurement {
-    //         kind: Kind::Gauge,
-    //         measure_time: chrono::Utc::now().into(),
-    //         value: 1.0,
-    //         name: "test".into(),
-    //         source: "test".into(),
-    //     });
+    #[tokio::test]
+    async fn test_shutdown_fails_with_queued_measurements() {
+        let client = Client::new("api-token", None);
+        client.add_measurement(Measurement {
+            measure_time: chrono::Utc::now().into(),
+            value: 1.0,
+            name: "test".into(),
+        });
 
-    //     assert!(client.shutdown().await.is_err());
-    // }
+        assert!(client.shutdown().await.is_err());
+    }
 
     // #[tokio::test]
     // async fn test_full_send() -> Result<()> {
