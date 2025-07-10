@@ -1,10 +1,10 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, FixedOffset};
 use crossbeam_utils::sync::WaitGroup;
 use rustls::pki_types::ServerName;
+use std::sync::LazyLock;
 use std::{
     fmt::Display,
-    io,
     net::ToSocketAddrs,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -15,6 +15,17 @@ use tokio_rustls::TlsConnector;
 use tracing::{debug, error};
 
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
+
+static SSL_CLIENT_CONFIG: LazyLock<Arc<rustls::ClientConfig>> = LazyLock::new(|| {
+    let mut root_cert_store = rustls::RootCertStore::empty();
+    root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    Arc::new(
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth(),
+    )
+});
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Measurement {
@@ -112,7 +123,7 @@ impl Client {
         Ok(())
     }
 
-    /// Actually send the measurements to graphite using their API.
+    /// Actually send the measurements to graphite using TCP/IP with TLS.
     #[tracing::instrument(skip(measurements))]
     async fn send(
         api_key: impl AsRef<str> + std::fmt::Debug,
@@ -122,25 +133,16 @@ impl Client {
 
         let host = "carbon.hostedgraphite.com";
 
+        // Resolve the host to a socket address
         let addr = (host, 20030)
-            .to_socket_addrs()?
+            .to_socket_addrs()? // does DNS resolution too, we rely on normal DNS caching for speed
             .next()
-            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+            .ok_or_else(|| anyhow!("couldn't resolve host: {host}"))?;
 
-        let mut root_cert_store = rustls::RootCertStore::empty();
-        root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-        let config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_cert_store)
-            .with_no_client_auth();
-
-        let connector = TlsConnector::from(Arc::new(config));
-
+        let connector = TlsConnector::from(SSL_CLIENT_CONFIG.clone());
         let stream = TcpStream::connect(&addr).await?;
-
         let domain = ServerName::try_from(host)?;
         let mut stream = connector.connect(domain, stream).await?;
-
         let mut buf: Vec<u8> = Vec::with_capacity(measurements.len() * 64);
 
         for m in measurements {

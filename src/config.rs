@@ -73,8 +73,9 @@ impl Config {
     /// - wait for all running waitgroup tickets
     /// - shut down sentry clients
     /// - send pending librato metrics
+    /// - send pending graphite metrics
     pub(crate) async fn shutdown(&self) {
-        info!("flushing librato metrics");
+        info!("flushing metrics");
         for destination in self.destinations.values() {
             // we have to do this before we wait for the waitgroups,
             // since we might have running background send-to-librato tasks.
