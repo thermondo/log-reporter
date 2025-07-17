@@ -1,7 +1,8 @@
-use crate::{librato, log_parser::OwnedScalingEvent};
-use anyhow::Result;
+use crate::{graphite, librato, log_parser::OwnedScalingEvent};
+use anyhow::{Context as _, Result, bail};
 use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
+use serde::Deserialize;
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -13,11 +14,55 @@ use tracing::{debug, error, info, instrument, warn};
 #[cfg(test)]
 use std::future::Future;
 
+/// parseable settings for a destination.
+/// Can be parsed via TOML, or old-style environment variable values.
+///
+/// TOML format is a multiline TOML table:
+///     logplex_token="some-token"
+///     sentry_environment="env"
+/// the line breaks are important.
+///
+/// old-style format is:
+///     logplex_token|sentry_environment|sentry_dsn|librato_username|librato_token
+/// (doesn't support graphite)
+#[derive(Deserialize)]
+struct DestinationSettings {
+    logplex_token: String,
+    sentry_environment: String,
+    sentry_dsn: String,
+    librato_username: Option<String>,
+    librato_password: Option<String>,
+    graphite_api_key: Option<String>,
+}
+
+impl DestinationSettings {
+    fn from_environment_line(line: &str) -> Result<Self> {
+        let pieces: Vec<_> = line.trim().split('|').collect();
+        if pieces.len() < 3 {
+            bail!("wrong sentry mapping line format.");
+        }
+
+        Ok(Self {
+            logplex_token: pieces[0].to_owned(),
+            sentry_environment: pieces[1].to_owned(),
+            sentry_dsn: pieces[2].to_owned(),
+            librato_username: pieces.get(3).map(ToString::to_string),
+            librato_password: pieces.get(4).map(ToString::to_string),
+            graphite_api_key: None,
+        })
+    }
+
+    fn from_toml(line: &str) -> Result<Self> {
+        toml::from_str(line).context("failed to parse destination settings")
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Destination {
     pub(crate) sentry_client: Arc<sentry::Client>,
 
     pub(crate) librato_client: Option<librato::Client>,
+    pub(crate) graphite_client: Option<graphite::Client>,
 
     /// store the last seen scaling events so we can re-send them,
     /// assuming that the dyno counts don't change between scaling events.
@@ -28,10 +73,12 @@ impl Destination {
     pub(crate) fn new(
         sentry_client: Arc<sentry::Client>,
         librato_client: Option<librato::Client>,
+        graphite_client: Option<graphite::Client>,
     ) -> Self {
         Self {
             sentry_client,
             librato_client,
+            graphite_client,
             last_scaling_events: Mutex::new(None),
         }
     }
@@ -70,22 +117,27 @@ impl Config {
     /// - wait for all running waitgroup tickets
     /// - shut down sentry clients
     /// - send pending librato metrics
+    /// - send pending graphite metrics
     pub(crate) async fn shutdown(&self) {
-        info!("flushing librato metrics");
+        info!("flushing metrics");
         for destination in self.destinations.values() {
-            let Some(librato_client) = &destination.librato_client else {
-                continue;
-            };
-
             // we have to do this before we wait for the waitgroups,
             // since we might have running background send-to-librato tasks.
             // the shutdown itself won't generate new tasks, so we're fine here.
-            if let Err(err) = librato_client.shutdown().await {
-                error!(
-                    ?err,
-                    librato_client.username, "error shutting down librato client"
-                );
-            };
+
+            if let Some(graphite_client) = &destination.graphite_client {
+                if let Err(err) = graphite_client.shutdown().await {
+                    error!(?err, "error shutting down graphite client ");
+                };
+            }
+            if let Some(librato_client) = &destination.librato_client {
+                if let Err(err) = librato_client.shutdown().await {
+                    error!(
+                        ?err,
+                        librato_client.username, "error shutting down librato client"
+                    );
+                };
+            }
         }
 
         info!(?self.waitgroup, "waiting for pending background tasks");
@@ -131,20 +183,20 @@ impl Config {
                 continue;
             }
 
-            let pieces: Vec<_> = value.trim().split('|').collect();
-            if pieces.len() < 3 {
-                error!(name, value, "wrong sentry mapping line format.");
-                continue;
-            }
+            let settings = match DestinationSettings::from_toml(&value) {
+                Ok(settings) => settings,
+                Err(err) => {
+                    warn!(?err, value, "couldn't parse destination settings as TOML");
 
-            let logplex_token = pieces[0];
-            let sentry_environment = pieces[1];
-            let sentry_dsn = pieces[2];
+                    DestinationSettings::from_environment_line(&value)
+                        .context("couldn't parse destination settings with separators")?
+                }
+            };
 
             let client = sentry::Client::from((
-                sentry_dsn.to_owned(),
+                settings.sentry_dsn.to_owned(),
                 sentry::ClientOptions {
-                    environment: Some(Cow::Owned(sentry_environment.to_owned())),
+                    environment: Some(Cow::Owned(settings.sentry_environment.to_owned())),
                     transport: Some(Arc::new(DefaultTransportFactory)),
                     debug: config.sentry_debug,
                     ..Default::default()
@@ -153,19 +205,21 @@ impl Config {
 
             if !client.is_enabled() {
                 error!(
-                    ?logplex_token,
-                    ?sentry_environment,
-                    ?sentry_dsn,
+                    ?settings.logplex_token,
+                    ?settings.sentry_environment,
+                    ?settings.sentry_dsn,
                     "sentry client is not enabled",
                 );
                 continue;
             }
 
-            let librato_client = if let Some(&[username, token]) = pieces.get(3..=4) {
+            let librato_client = if let (Some(username), Some(password)) =
+                (settings.librato_username, settings.librato_password)
+            {
                 info!(username, "configuring librato client");
                 Some(librato::Client::new(
                     username.to_string(),
-                    token.to_string(),
+                    password.to_string(),
                     config.new_waitgroup_ticket(),
                     #[cfg(test)]
                     "invalid_endpoint",
@@ -174,15 +228,31 @@ impl Config {
                 None
             };
 
+            let graphite_client = if let Some(api_key) = settings.graphite_api_key {
+                info!("configuring graphite client");
+                Some(graphite::Client::new(
+                    api_key.to_string(),
+                    config.new_waitgroup_ticket(),
+                    #[cfg(test)]
+                    "invalid_endpoint",
+                )?)
+            } else {
+                None
+            };
+
             config.destinations.insert(
-                logplex_token.to_owned(),
-                Arc::new(Destination::new(Arc::new(client), librato_client)),
+                settings.logplex_token.to_owned(),
+                Arc::new(Destination::new(
+                    Arc::new(client),
+                    librato_client,
+                    graphite_client,
+                )),
             );
 
             info!(
-                ?logplex_token,
-                ?sentry_environment,
-                ?sentry_dsn,
+                ?settings.logplex_token,
+                ?settings.sentry_environment,
+                ?settings.sentry_dsn,
                 "loaded logplex sentry mapping"
             );
         }
@@ -226,7 +296,7 @@ impl Config {
                 ..Default::default()
             },
         )));
-        let dest = Arc::new(Destination::new(client.clone(), None));
+        let dest = Arc::new(Destination::new(client.clone(), None, None));
         self.destinations
             .insert(logplex_token.to_owned(), dest.clone());
 
@@ -252,5 +322,125 @@ impl Config {
             })
             .await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_case::test_case;
+
+    #[test_case("")]
+    #[test_case("1|2")]
+    fn test_invalid_old_destination_setting_format(line: &str) {
+        assert!(DestinationSettings::from_environment_line(line).is_err());
+    }
+
+    #[test]
+    fn test_load_old_destination_setting_format_minimal() -> anyhow::Result<()> {
+        let settings = DestinationSettings::from_environment_line(
+            "logplex_token|sentry_environment|sentry_dsn",
+        )?;
+
+        assert_eq!(settings.logplex_token, "logplex_token");
+        assert_eq!(settings.sentry_environment, "sentry_environment");
+        assert_eq!(settings.sentry_dsn, "sentry_dsn");
+        assert!(settings.librato_username.is_none());
+        assert!(settings.librato_password.is_none());
+        assert!(settings.graphite_api_key.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_old_destination_setting_format_max() -> anyhow::Result<()> {
+        let settings = DestinationSettings::from_environment_line(
+            "logplex_token|sentry_environment|sentry_dsn|librato_username|librato_password",
+        )?;
+
+        assert_eq!(settings.logplex_token, "logplex_token");
+        assert_eq!(settings.sentry_environment, "sentry_environment");
+        assert_eq!(settings.sentry_dsn, "sentry_dsn");
+        assert_eq!(
+            settings.librato_username.as_deref(),
+            Some("librato_username")
+        );
+        assert_eq!(
+            settings.librato_password.as_deref(),
+            Some("librato_password")
+        );
+        assert!(settings.graphite_api_key.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_toml_destination_setting_format_minimal() -> anyhow::Result<()> {
+        let settings = DestinationSettings::from_toml(
+            "logplex_token = \"logplex_token\"
+                   sentry_environment = \"sentry_environment\"
+                   sentry_dsn = \"sentry_dsn\"",
+        )?;
+
+        assert_eq!(settings.logplex_token, "logplex_token");
+        assert_eq!(settings.sentry_environment, "sentry_environment");
+        assert_eq!(settings.sentry_dsn, "sentry_dsn");
+        assert!(settings.librato_username.is_none());
+        assert!(settings.librato_password.is_none());
+        assert!(settings.graphite_api_key.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_toml_destination_setting_format_max() -> anyhow::Result<()> {
+        let settings = DestinationSettings::from_toml(
+            "logplex_token = \"logplex_token\"
+                   sentry_environment = \"sentry_environment\"
+                   sentry_dsn = \"sentry_dsn\"
+                   librato_username = \"librato_username\"
+                   librato_password = \"librato_password\"
+                   graphite_api_key = \"graphite_api_key\"",
+        )?;
+
+        assert_eq!(settings.logplex_token, "logplex_token");
+        assert_eq!(settings.sentry_environment, "sentry_environment");
+        assert_eq!(settings.sentry_dsn, "sentry_dsn");
+        assert_eq!(
+            settings.librato_username.as_deref(),
+            Some("librato_username")
+        );
+        assert_eq!(
+            settings.librato_password.as_deref(),
+            Some("librato_password")
+        );
+        assert_eq!(
+            settings.graphite_api_key.as_deref(),
+            Some("graphite_api_key")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_toml_destination_setting_format_just_graphite() -> anyhow::Result<()> {
+        let settings = DestinationSettings::from_toml(
+            "logplex_token = \"logplex_token\"
+                   sentry_environment = \"sentry_environment\"
+                   sentry_dsn = \"sentry_dsn\"
+                   graphite_api_key = \"graphite_api_key\"",
+        )?;
+
+        assert_eq!(settings.logplex_token, "logplex_token");
+        assert_eq!(settings.sentry_environment, "sentry_environment");
+        assert_eq!(settings.sentry_dsn, "sentry_dsn");
+        assert!(settings.librato_username.is_none());
+        assert!(settings.librato_password.is_none());
+        assert_eq!(
+            settings.graphite_api_key.as_deref(),
+            Some("graphite_api_key")
+        );
+
+        Ok(())
     }
 }
