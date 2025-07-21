@@ -52,8 +52,8 @@ impl DestinationSettings {
         })
     }
 
-    fn from_toml(line: &str) -> Result<Self> {
-        toml::from_str(line).context("failed to parse destination settings")
+    fn from_toml(value: &str) -> Result<Self> {
+        toml::from_str(value).context("failed to parse destination settings")
     }
 }
 
