@@ -142,7 +142,7 @@ impl Client {
         Ok(())
     }
 
-    /// Actually send the measurements to graphite using TCP/IP with TLS.
+    /// Actually send the measurements to graphite using their HTTP API
     #[tracing::instrument(skip(measurements))]
     async fn send(
         api_key: impl AsRef<str> + std::fmt::Debug,
