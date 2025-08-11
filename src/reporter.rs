@@ -158,10 +158,10 @@ pub(crate) fn process_logs(destination: Arc<Destination>, input: &str) -> Result
                 continue;
             };
 
-            if *code == "H12" {
-                if let Some(msg) = generate_request_timeout_message(&log, &map) {
-                    send_to_sentry(destination.sentry_client.clone(), msg);
-                }
+            if *code == "H12"
+                && let Some(msg) = generate_request_timeout_message(&log, &map)
+            {
+                send_to_sentry(destination.sentry_client.clone(), msg);
             }
         } else if let Ok((_, (code, name))) = parse_dyno_error_code(log.text) {
             if let Some(msg) = generate_dyno_error_message(code, name, &log) {

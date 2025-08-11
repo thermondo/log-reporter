@@ -125,19 +125,19 @@ impl Config {
             // since we might have running background send-to-librato tasks.
             // the shutdown itself won't generate new tasks, so we're fine here.
 
-            if let Some(graphite_client) = &destination.graphite_client {
-                if let Err(err) = graphite_client.shutdown().await {
-                    error!(?err, "error shutting down graphite client ");
-                };
-            }
-            if let Some(librato_client) = &destination.librato_client {
-                if let Err(err) = librato_client.shutdown().await {
-                    error!(
-                        ?err,
-                        librato_client.username, "error shutting down librato client"
-                    );
-                };
-            }
+            if let Some(graphite_client) = &destination.graphite_client
+                && let Err(err) = graphite_client.shutdown().await
+            {
+                error!(?err, "error shutting down graphite client ");
+            };
+            if let Some(librato_client) = &destination.librato_client
+                && let Err(err) = librato_client.shutdown().await
+            {
+                error!(
+                    ?err,
+                    librato_client.username, "error shutting down librato client"
+                );
+            };
         }
 
         info!(?self.waitgroup, "waiting for pending background tasks");

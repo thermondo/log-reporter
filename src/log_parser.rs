@@ -28,7 +28,7 @@ pub(crate) struct LogLine<'a> {
 pub(crate) type LogMap<'a> = BTreeMap<&'a str, &'a str>;
 
 #[instrument]
-pub(crate) fn parse_log_line(input: &str) -> IResult<&str, LogLine> {
+pub(crate) fn parse_log_line(input: &'_ str) -> IResult<&'_ str, LogLine<'_>> {
     map(
         (
             preceded(multispace0, digit1),
@@ -112,7 +112,9 @@ impl<'a> From<&ScalingEvent<'a>> for OwnedScalingEvent {
 /// parses heroku scaling events
 /// format like:
 ///     Scaled to web@4:Standard-1X worker@3:Standard-2X by user heroku.hirefire.api@thermondo.de
-pub(crate) fn parse_scaling_event(input: &str) -> IResult<&str, (Vec<ScalingEvent>, &str)> {
+pub(crate) fn parse_scaling_event(
+    input: &'_ str,
+) -> IResult<&'_ str, (Vec<ScalingEvent<'_>>, &'_ str)> {
     map(
         (
             preceded(multispace0, tag("Scaled to")),
@@ -128,7 +130,7 @@ pub(crate) fn parse_scaling_event(input: &str) -> IResult<&str, (Vec<ScalingEven
 /// parses single scaling element
 /// format like:
 ///     web@4:Standard-1X
-fn parse_single_scaling_event(input: &str) -> IResult<&str, ScalingEvent> {
+fn parse_single_scaling_event(input: &'_ str) -> IResult<&'_ str, ScalingEvent<'_>> {
     map(
         (
             take_till1(|c: char| c == '@'),
@@ -163,7 +165,7 @@ pub(crate) fn parse_dyno_error_code(input: &str) -> IResult<&str, (&str, &str)> 
     .parse(input)
 }
 
-pub(crate) fn parse_key_value_pairs(input: &str) -> IResult<&str, LogMap> {
+pub(crate) fn parse_key_value_pairs(input: &'_ str) -> IResult<&'_ str, LogMap<'_>> {
     map(
         many1(map(
             delimited(
