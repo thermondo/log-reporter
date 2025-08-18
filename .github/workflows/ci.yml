@@ -14,7 +14,7 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: install
         run: |
           rustup override set stable
@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: install
         run: |
           rustup override set stable
@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: install
         run: |
           rustup override set stable
@@ -64,7 +64,7 @@ jobs:
       # that the build works without it.
       DOCKER_BUILDKIT: 0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: build docker image via docker-compose
         run: docker compose build web
 
