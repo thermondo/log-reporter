@@ -18,7 +18,6 @@ mod background;
 mod config;
 mod extractors;
 mod graphite;
-mod librato;
 mod log_parser;
 mod metrics;
 mod reporter;
