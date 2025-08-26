@@ -5,7 +5,7 @@ use crate::{
         parse_offer_extension_number, parse_offer_number, parse_project_reference,
         parse_scaling_event, parse_sfid,
     },
-    metrics::{generate_graphite_scaling_metrics, generate_librato_scaling_metrics},
+    metrics::generate_graphite_scaling_metrics,
 };
 use anyhow::{Context as _, Result};
 use axum::http::uri::Uri;
@@ -169,7 +169,7 @@ pub(crate) fn process_logs(destination: Arc<Destination>, input: &str) -> Result
             }
         } else if matches!(log.kind, Kind::App)
             && log.source == "api"
-            && (destination.librato_client.is_some() || destination.graphite_client.is_some())
+            && destination.graphite_client.is_some()
         {
             let Ok((_, (events, _user))) = parse_scaling_event(log.text) else {
                 continue;
@@ -179,14 +179,6 @@ pub(crate) fn process_logs(destination: Arc<Destination>, input: &str) -> Result
             // background task.
             let mut last_events = destination.last_scaling_events.lock().unwrap();
             *last_events = Some(events.iter().map(Into::into).collect());
-
-            if let Some(ref librato_client) = destination.librato_client {
-                debug!("trying to report scaling metrics to librato");
-
-                for measurement in generate_librato_scaling_metrics(&log.timestamp, &events) {
-                    librato_client.add_measurement(measurement);
-                }
-            }
 
             if let Some(ref graphite_client) = destination.graphite_client {
                 debug!("trying to report scaling metrics to graphite");

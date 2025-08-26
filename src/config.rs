@@ -1,4 +1,4 @@
-use crate::{graphite, librato, log_parser::OwnedScalingEvent};
+use crate::{graphite, log_parser::OwnedScalingEvent};
 use anyhow::{Context as _, Result, bail};
 use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
@@ -23,15 +23,13 @@ use std::future::Future;
 /// the line breaks are important.
 ///
 /// old-style format is:
-///     logplex_token|sentry_environment|sentry_dsn|librato_username|librato_token
+///     logplex_token|sentry_environment|sentry_dsn
 /// (doesn't support graphite)
 #[derive(Deserialize)]
 struct DestinationSettings {
     logplex_token: String,
     sentry_environment: String,
     sentry_dsn: String,
-    librato_username: Option<String>,
-    librato_password: Option<String>,
     graphite_api_key: Option<String>,
 }
 
@@ -46,8 +44,6 @@ impl DestinationSettings {
             logplex_token: pieces[0].to_owned(),
             sentry_environment: pieces[1].to_owned(),
             sentry_dsn: pieces[2].to_owned(),
-            librato_username: pieces.get(3).map(ToString::to_string),
-            librato_password: pieces.get(4).map(ToString::to_string),
             graphite_api_key: None,
         })
     }
@@ -61,7 +57,6 @@ impl DestinationSettings {
 pub(crate) struct Destination {
     pub(crate) sentry_client: Arc<sentry::Client>,
 
-    pub(crate) librato_client: Option<librato::Client>,
     pub(crate) graphite_client: Option<graphite::Client>,
 
     /// store the last seen scaling events so we can re-send them,
@@ -72,12 +67,10 @@ pub(crate) struct Destination {
 impl Destination {
     pub(crate) fn new(
         sentry_client: Arc<sentry::Client>,
-        librato_client: Option<librato::Client>,
         graphite_client: Option<graphite::Client>,
     ) -> Self {
         Self {
             sentry_client,
-            librato_client,
             graphite_client,
             last_scaling_events: Mutex::new(None),
         }
@@ -116,27 +109,18 @@ impl Config {
     /// will
     /// - wait for all running waitgroup tickets
     /// - shut down sentry clients
-    /// - send pending librato metrics
     /// - send pending graphite metrics
     pub(crate) async fn shutdown(&self) {
         info!("flushing metrics");
         for destination in self.destinations.values() {
             // we have to do this before we wait for the waitgroups,
-            // since we might have running background send-to-librato tasks.
+            // since we might have running background send-to-graphite tasks.
             // the shutdown itself won't generate new tasks, so we're fine here.
 
             if let Some(graphite_client) = &destination.graphite_client
                 && let Err(err) = graphite_client.shutdown().await
             {
                 error!(?err, "error shutting down graphite client ");
-            };
-            if let Some(librato_client) = &destination.librato_client
-                && let Err(err) = librato_client.shutdown().await
-            {
-                error!(
-                    ?err,
-                    librato_client.username, "error shutting down librato client"
-                );
             };
         }
 
@@ -213,21 +197,6 @@ impl Config {
                 continue;
             }
 
-            let librato_client = if let (Some(username), Some(password)) =
-                (settings.librato_username, settings.librato_password)
-            {
-                info!(username, "configuring librato client");
-                Some(librato::Client::new(
-                    username.to_string(),
-                    password.to_string(),
-                    config.new_waitgroup_ticket(),
-                    #[cfg(test)]
-                    "invalid_endpoint",
-                ))
-            } else {
-                None
-            };
-
             let graphite_client = if let Some(api_key) = settings.graphite_api_key {
                 info!("configuring graphite client");
                 Some(graphite::Client::new(
@@ -242,11 +211,7 @@ impl Config {
 
             config.destinations.insert(
                 settings.logplex_token.to_owned(),
-                Arc::new(Destination::new(
-                    Arc::new(client),
-                    librato_client,
-                    graphite_client,
-                )),
+                Arc::new(Destination::new(Arc::new(client), graphite_client)),
             );
 
             info!(
@@ -296,7 +261,7 @@ impl Config {
                 ..Default::default()
             },
         )));
-        let dest = Arc::new(Destination::new(client.clone(), None, None));
+        let dest = Arc::new(Destination::new(client.clone(), None));
         self.destinations
             .insert(logplex_token.to_owned(), dest.clone());
 
@@ -345,8 +310,6 @@ mod tests {
         assert_eq!(settings.logplex_token, "logplex_token");
         assert_eq!(settings.sentry_environment, "sentry_environment");
         assert_eq!(settings.sentry_dsn, "sentry_dsn");
-        assert!(settings.librato_username.is_none());
-        assert!(settings.librato_password.is_none());
         assert!(settings.graphite_api_key.is_none());
 
         Ok(())
@@ -355,20 +318,12 @@ mod tests {
     #[test]
     fn test_load_old_destination_setting_format_max() -> anyhow::Result<()> {
         let settings = DestinationSettings::from_environment_line(
-            "logplex_token|sentry_environment|sentry_dsn|librato_username|librato_password",
+            "logplex_token|sentry_environment|sentry_dsn",
         )?;
 
         assert_eq!(settings.logplex_token, "logplex_token");
         assert_eq!(settings.sentry_environment, "sentry_environment");
         assert_eq!(settings.sentry_dsn, "sentry_dsn");
-        assert_eq!(
-            settings.librato_username.as_deref(),
-            Some("librato_username")
-        );
-        assert_eq!(
-            settings.librato_password.as_deref(),
-            Some("librato_password")
-        );
         assert!(settings.graphite_api_key.is_none());
 
         Ok(())
@@ -385,8 +340,6 @@ mod tests {
         assert_eq!(settings.logplex_token, "logplex_token");
         assert_eq!(settings.sentry_environment, "sentry_environment");
         assert_eq!(settings.sentry_dsn, "sentry_dsn");
-        assert!(settings.librato_username.is_none());
-        assert!(settings.librato_password.is_none());
         assert!(settings.graphite_api_key.is_none());
 
         Ok(())
@@ -398,22 +351,12 @@ mod tests {
             "logplex_token = \"logplex_token\"
                    sentry_environment = \"sentry_environment\"
                    sentry_dsn = \"sentry_dsn\"
-                   librato_username = \"librato_username\"
-                   librato_password = \"librato_password\"
                    graphite_api_key = \"graphite_api_key\"",
         )?;
 
         assert_eq!(settings.logplex_token, "logplex_token");
         assert_eq!(settings.sentry_environment, "sentry_environment");
         assert_eq!(settings.sentry_dsn, "sentry_dsn");
-        assert_eq!(
-            settings.librato_username.as_deref(),
-            Some("librato_username")
-        );
-        assert_eq!(
-            settings.librato_password.as_deref(),
-            Some("librato_password")
-        );
         assert_eq!(
             settings.graphite_api_key.as_deref(),
             Some("graphite_api_key")
@@ -434,8 +377,6 @@ mod tests {
         assert_eq!(settings.logplex_token, "logplex_token");
         assert_eq!(settings.sentry_environment, "sentry_environment");
         assert_eq!(settings.sentry_dsn, "sentry_dsn");
-        assert!(settings.librato_username.is_none());
-        assert!(settings.librato_password.is_none());
         assert_eq!(
             settings.graphite_api_key.as_deref(),
             Some("graphite_api_key")
