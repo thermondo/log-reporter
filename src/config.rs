@@ -5,6 +5,7 @@ use sentry::transports::DefaultTransportFactory;
 use serde::Deserialize;
 use std::{
     borrow::Cow,
+    cmp::max,
     collections::HashMap,
     env,
     sync::{Arc, Mutex, RwLock},
@@ -73,6 +74,52 @@ impl Destination {
             sentry_client,
             graphite_client,
             last_scaling_events: Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn update_scaling_event_from_seen_sources<'a>(
+        &self,
+        sources: impl IntoIterator<Item = &'a str>,
+    ) {
+        let mut max_dyno_number_seen: HashMap<&str, u16> = HashMap::new();
+        for source in sources {
+            if let Some((proc, num)) = source.split_once('.') {
+                let Ok(num) = num.parse::<u16>() else {
+                    continue;
+                };
+
+                max_dyno_number_seen
+                    .entry(proc)
+                    .and_modify(|seen| {
+                        if num > *seen {
+                            *seen = num
+                        }
+                    })
+                    .or_insert(num);
+            }
+        }
+
+        let mut last_scaling_events = self.last_scaling_events.lock().unwrap();
+        if last_scaling_events.is_none() {
+            *last_scaling_events = Some(Vec::new());
+        }
+
+        if let Some(ref mut last_scaling_events) = *last_scaling_events {
+            for evt in last_scaling_events.iter_mut() {
+                if let Some(seen_count) = max_dyno_number_seen.remove(&evt.proc[..]) {
+                    evt.count = max(seen_count, evt.count);
+                }
+            }
+
+            for (proc, count) in max_dyno_number_seen {
+                last_scaling_events.push(OwnedScalingEvent {
+                    proc: proc.to_owned(),
+                    count,
+                    size: "?".into(),
+                });
+            }
+        } else {
+            unreachable!();
         }
     }
 }
