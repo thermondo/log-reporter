@@ -15,7 +15,7 @@ pub(crate) async fn resend_scaling_events(config: Arc<Config>) {
     loop {
         sleep(Duration::from_secs(10)).await;
 
-        for (_, destination) in config.destinations.iter() {
+        for destination in config.destinations.values() {
             let last_scaling_events = destination.last_scaling_events.lock().unwrap();
 
             let Some(events) = &*last_scaling_events else {
