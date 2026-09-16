@@ -4,7 +4,6 @@ use crossbeam_utils::sync::WaitGroup;
 use sentry::transports::DefaultTransportFactory;
 use serde::Deserialize;
 use std::{
-    borrow::Cow,
     collections::HashMap,
     env,
     sync::{Arc, Mutex, RwLock},
@@ -179,12 +178,10 @@ impl Config {
 
             let client = sentry::Client::from((
                 settings.sentry_dsn.to_owned(),
-                sentry::ClientOptions {
-                    environment: Some(Cow::Owned(settings.sentry_environment.to_owned())),
-                    transport: Some(Arc::new(DefaultTransportFactory)),
-                    debug: config.sentry_debug,
-                    ..Default::default()
-                },
+                sentry::ClientOptions::new()
+                    .environment(settings.sentry_environment.to_owned())
+                    .transport(DefaultTransportFactory)
+                    .debug(config.sentry_debug),
             ));
 
             if !client.is_enabled() {
@@ -256,10 +253,7 @@ impl Config {
         let test_transport = Arc::new(sentry::test::TestTransport::new());
         let client = Arc::new(sentry::Client::from((
             "https://public@example.com/1".to_owned(),
-            sentry::ClientOptions {
-                transport: Some(test_transport.clone()),
-                ..Default::default()
-            },
+            sentry::ClientOptions::new().transport(test_transport.clone()),
         )));
         let dest = Arc::new(Destination::new(client.clone(), None));
         self.destinations
