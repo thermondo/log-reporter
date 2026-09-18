@@ -4,7 +4,6 @@ use sentry::integrations::{
     panic as sentry_panic, tower as sentry_tower, tracing as sentry_tracing,
 };
 use std::{
-    borrow::Cow,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
@@ -47,14 +46,12 @@ async fn main() -> Result<()> {
         tracing_registry.with(sentry_tracing::layer()).init();
         Some(sentry::init((
             sentry_dsn.clone(),
-            sentry::ClientOptions {
-                release: heroku_release.map(Cow::Owned),
-                attach_stacktrace: true,
-                debug: config.sentry_debug,
-                traces_sample_rate: config.sentry_traces_sample_rate,
-                ..Default::default()
-            }
-            .add_integration(sentry_panic::PanicIntegration::default()),
+            sentry::ClientOptions::new()
+                .maybe_release(heroku_release)
+                .attach_stacktrace(true)
+                .debug(config.sentry_debug)
+                .traces_sample_rate(config.sentry_traces_sample_rate)
+                .add_integration(sentry_panic::PanicIntegration::default()),
         )))
     } else {
         tracing_registry.init();
